@@ -17,6 +17,10 @@ test: | $(B)
 	 echo "vaes: $$a" && echo "sse:  $$b" && echo "port: $$c" && \
 	 [ "$$a" = "$$b" ] && [ "$$b" = "$$c" ] && echo "cross-check OK"
 	$(B)/bounds && $(B)/bounds_port
+	$(CC) -O2 -march=native -Wall -Wextra -o $(B)/seed_vaes test/seedindep.c
+	$(CC) -O2 -march=native -mno-vaes -Wall -Wextra -o $(B)/seed_sse test/seedindep.c
+	$(CC) -O2 -DHASSH_PORTABLE -Wall -Wextra -o $(B)/seed_port test/seedindep.c
+	$(B)/seed_vaes && $(B)/seed_sse && $(B)/seed_port
 
 $(B):
 	mkdir -p $(B)
