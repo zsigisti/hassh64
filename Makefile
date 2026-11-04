@@ -2,7 +2,7 @@ CC  ?= gcc
 CXX ?= g++
 B   := build
 
-.PHONY: test test-arm test-cross bench clean
+.PHONY: test test-arm test-cross bench cli clean
 
 # Cross-check: the VAES, SSE/AES-NI and portable builds must agree with the
 # portable reference and with each other (same digest), and never read out of
@@ -58,6 +58,10 @@ test-arm: | $(B)
 	$(QEMU) -cpu max $(B)/arm_bounds
 	zig cc -target aarch64-linux-musl -mcpu=cortex_a76+aes -O2 -o $(B)/arm_xlen test/xlen.c
 	$(QEMU) -cpu max $(B)/arm_xlen | tail -1
+
+# Command-line tool: build/hassh64 "text", or -f FILE, or stdin.
+cli: | $(B)
+	$(CC) -O2 -Wall -Wextra -o $(B)/hassh64 tools/hassh64.c
 
 bench: | $(B)
 	$(CXX) -O3 -march=native -std=c++17 -o $(B)/bench bench/bench.cpp
