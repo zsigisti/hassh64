@@ -1,0 +1,33 @@
+cmake_minimum_required(VERSION 3.14)
+project(hassh64 VERSION 1.0.0 LANGUAGES C)
+
+# Header-only. Use with add_subdirectory() or FetchContent, then
+#   target_link_libraries(your_target PRIVATE hassh64::hassh64)
+add_library(hassh64 INTERFACE)
+add_library(hassh64::hassh64 ALIAS hassh64)
+target_include_directories(hassh64 INTERFACE
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+    $<INSTALL_INTERFACE:include>)
+target_compile_features(hassh64 INTERFACE c_std_99)
+
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    include(CTest)
+    if(BUILD_TESTING)
+        add_executable(hassh64_vectors test/vectors.c)
+        target_link_libraries(hassh64_vectors PRIVATE hassh64)
+        add_test(NAME vectors COMMAND hassh64_vectors)
+    endif()
+
+    include(GNUInstallDirs)
+    install(FILES hassh.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+    install(TARGETS hassh64 EXPORT hassh64Targets)
+    install(EXPORT hassh64Targets NAMESPACE hassh64:: DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/hassh64)
+    include(CMakePackageConfigHelpers)
+    file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/hassh64Config.cmake
+         "include(\"\${CMAKE_CURRENT_LIST_DIR}/hassh64Targets.cmake\")\n")
+    write_basic_package_version_file(${CMAKE_CURRENT_BINARY_DIR}/hassh64ConfigVersion.cmake
+         COMPATIBILITY SameMajorVersion ARCH_INDEPENDENT)
+    install(FILES ${CMAKE_CURRENT_BINARY_DIR}/hassh64Config.cmake
+                  ${CMAKE_CURRENT_BINARY_DIR}/hassh64ConfigVersion.cmake
+            DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/hassh64)
+endif()
