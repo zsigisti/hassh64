@@ -2,7 +2,7 @@ CC  ?= gcc
 CXX ?= g++
 B   := build
 
-.PHONY: test test-arm clean
+.PHONY: test test-arm bench clean
 
 # Cross-check: the VAES, SSE/AES-NI and portable builds must agree with the
 # portable reference and with each other (same digest), and never read out of
@@ -38,6 +38,10 @@ test-arm: | $(B)
 	$(QEMU) -cpu max $(B)/arm_bounds
 	zig cc -target aarch64-linux-musl -mcpu=cortex_a76+aes -O2 -o $(B)/arm_xlen test/xlen.c
 	$(QEMU) -cpu max $(B)/arm_xlen | tail -1
+
+bench: | $(B)
+	$(CXX) -O3 -march=native -std=c++17 -o $(B)/bench bench/bench.cpp
+	taskset -c 3 $(B)/bench
 
 $(B):
 	mkdir -p $(B)
