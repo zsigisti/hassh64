@@ -1,0 +1,29 @@
+name: ci
+on: [push, pull_request]
+jobs:
+  vectors:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest,  name: "Linux GCC, default flags (run-time dispatch)", cflags: "" }
+          - { os: ubuntu-latest,  name: "Linux GCC, -march=native",  cflags: "-march=native" }
+          - { os: ubuntu-latest,  name: "Linux portable C",          cflags: "-DHASSH_PORTABLE" }
+          - { os: ubuntu-24.04-arm, name: "Linux AArch64 + AES",     cflags: "-march=armv8-a+crypto" }
+          - { os: macos-latest,   name: "macOS Apple silicon",       cflags: "" }
+          - { os: windows-latest, name: "Windows MSVC, portable",    cflags: "" }
+          - { os: windows-latest, name: "Windows MSVC, /arch:AVX2",  cflags: "/arch:AVX2" }
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release "-DCMAKE_C_FLAGS=${{ matrix.cflags }}"
+      - run: cmake --build build --config Release
+      - run: ctest --test-dir build -C Release --output-on-failure
+  full-suite:
+    name: Linux full test suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make test
+      - run: python3 ports/python/hassh64.py
