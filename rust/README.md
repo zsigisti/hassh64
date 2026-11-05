@@ -38,9 +38,9 @@ m.insert("two", 2);
 ### The `Hasher` adapter
 
 hassh64 is one-shot, so `Hassh64Hasher` buffers writes in a 64-byte inline buffer and hashes
-them in `finish`. If a write does not fit, the buffer is topped up and compressed into the
-state (`state = hassh64(buffer, state)`), and a remaining part over 64 bytes is compressed in
-one call.
+them in `finish`. If a write does not fit, the buffered bytes are compressed into the seed
+(`seed = hassh64(buffer, seed)`), and a write over 64 bytes is then hashed in one call with
+that seed. The seed keys are derived once per `BuildHasher`, not once per key.
 
 - Up to 64 bytes in total, the result is exactly `hassh64(bytes, seed)`, however the bytes
   were split across `write` calls.
@@ -64,30 +64,46 @@ The C header's 256-bit VAES path is not ported; it changes speed, not output.
 ## Benchmarks
 
 Intel Core Ultra 7 265KF, one core, `-C target-cpu=native`, criterion medians. Latency is one
-hash whose result feeds the next input, in ns (lower is better):
+hash whose result feeds the next input, in ns (lower is better).
 
-| bytes | hassh64 | rapidhash v3 | foldhash fast | ahash |
-|---:|---:|---:|---:|---:|
-| 8 | 4.3 | 3.8 | 4.1 | 6.2 |
-| 16 | 4.5 | 2.9 | 3.2 | 5.0 |
-| 32 | 6.1 | 5.3 | 4.9 | 8.2 |
-| 64 | 3.5 | 8.0 | 6.2 | 9.3 |
-| 128 | 11.5 | 4.9 | 7.6 | 11.2 |
-| 256 | 12.9 | 7.9 | 11.6 | 12.5 |
-| 1024 | 30.4 | 21.6 | 23.8 | 20.3 |
+Hashing a byte slice directly (one-shot functions):
+
+| bytes | hassh64 | rapidhash v3 |
+|---:|---:|---:|
+| 8 | 4.6 | 4.0 |
+| 16 | 4.7 | 3.1 |
+| 32 | 6.2 | 5.5 |
+| 64 | 3.5 | 8.5 |
+| 128 | 12.0 | 5.0 |
+| 256 | 13.5 | 8.2 |
+| 1024 | 31.5 | 22.6 |
+
+Hashing a `&[u8]` through `BuildHasher::hash_one` (what a `HashMap<Vec<u8>, _>` does; adds a
+length prefix):
+
+| bytes | hassh64 | foldhash fast | ahash |
+|---:|---:|---:|---:|
+| 8 | 6.0 | 4.2 | 6.4 |
+| 16 | 10.6 | 3.2 | 5.1 |
+| 32 | 12.1 | 5.0 | 8.5 |
+| 64 | 12.7 | 6.4 | 9.7 |
+| 128 | 17.1 | 7.9 | 11.8 |
+| 256 | 24.4 | 12.1 | 13.0 |
+| 1024 | 40.8 | 25.1 | 21.2 |
 
 `HashMap<u64, u64>`, 4096 inserts then 4096 lookups, in µs:
 
 | hassh64 | rapidhash fast | foldhash fast | ahash | std (SipHash) |
 |---:|---:|---:|---:|---:|
-| 31.2 | 20.4 | 19.0 | 20.7 | 150.3 |
+| 32.3 | 19.9 | 19.7 | 19.5 | 155.3 |
 
-**hassh64 is not the fastest Rust hasher.** It is about 1.5x slower than rapidhash and
-foldhash for `u64` map keys, because its 8-byte path is two dependent multiplies (part of the
-frozen algorithm, and what keeps SMHasher3's Bitflip test clean) where they do one. It is the
-fastest of the four at 64 bytes and close at 8, 32 and 256 bytes, but clearly slower at 16
-and 128 bytes and at 1 KiB (the C header's VAES path is not ported yet). Choose it for its
-SMHasher3 result and its cross-language, cross-platform output, not for raw speed in Rust.
+**hassh64 is not the fastest Rust hasher.** As a `HashMap` hasher it is about 1.6x slower than
+foldhash, ahash and rapidhash, and about 5x faster than std's SipHash. Its short paths are two
+to four dependent multiplies (part of the frozen algorithm, and what keeps SMHasher3's Bitflip
+test clean) where the others do one or two, and the C header's VAES path is not ported yet.
+As a one-shot function it is the fastest here at 64 bytes and close at 8 and 32. Choose it for
+its SMHasher3 result and its identical output across languages and platforms, not for raw
+speed in Rust.
 
 ## Features
 

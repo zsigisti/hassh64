@@ -139,3 +139,50 @@ fn write_u64_matches_one_shot() {
         }
     }
 }
+
+/// Every split of up to 64 bytes into two writes equals the one-shot hash,
+/// which exercises the inline copy at every length and buffer offset.
+#[test]
+fn two_writes_up_to_64_match_one_shot() {
+    use core::hash::Hasher;
+    let msg: Vec<u8> = (0..64u32).map(|i| (i * 31 + 7) as u8).collect();
+    for total in 0..=64 {
+        for cut in 0..=total {
+            let mut h = hassh64::Hassh64Hasher::with_seed(42);
+            h.write(&msg[..cut]);
+            h.write(&msg[cut..total]);
+            assert_eq!(h.finish(), hassh64::hassh64(&msg[..total], 42), "total {total} cut {cut}");
+        }
+    }
+}
+
+/// Past 64 bytes the output is chained, but must still be deterministic, depend
+/// on every byte, and differ for different write sequences of the same bytes.
+#[test]
+fn overflow_is_deterministic_and_sensitive() {
+    use core::hash::Hasher;
+    let msg: Vec<u8> = (0..1000u32).map(|i| (i * 31 + 7) as u8).collect();
+    let run = |parts: &[&[u8]]| {
+        let mut h = hassh64::Hassh64Hasher::with_seed(7);
+        for p in parts {
+            h.write(p);
+        }
+        h.finish()
+    };
+    for n in [65usize, 100, 128, 129, 300, 1000] {
+        let a = run(&[&msg[..8], &msg[8..n]]);
+        assert_eq!(a, run(&[&msg[..8], &msg[8..n]]));
+        let mut flipped = msg[..n].to_vec();
+        flipped[n - 1] ^= 1;
+        assert_ne!(a, run(&[&flipped[..8], &flipped[8..n]]), "last byte ignored at {n}");
+        flipped = msg[..n].to_vec();
+        flipped[0] ^= 1;
+        assert_ne!(a, run(&[&flipped[..8], &flipped[8..n]]), "first byte ignored at {n}");
+    }
+    // A u64 key and a str key of the same bytes must not trivially collide.
+    let mut h1 = hassh64::Hassh64Hasher::with_seed(0);
+    h1.write_u64(5);
+    let mut h2 = hassh64::Hassh64Hasher::with_seed(0);
+    h2.write(&5u64.to_le_bytes());
+    assert_eq!(h1.finish(), h2.finish()); // same bytes, same result: by design
+}

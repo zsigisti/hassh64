@@ -36,11 +36,11 @@ const BUF: usize = 64;
 /// A streaming [`Hasher`] built on [`hassh64`](crate::hassh64).
 ///
 /// hassh64 is a one-shot function, so the hasher buffers. Writes are appended to a
-/// 64-byte inline buffer; `finish` returns `hassh64(buffer, state)`. When a write
-/// does not fit, the buffer is topped up to 64 bytes and compressed into the state
-/// with `state = hassh64(buffer, state)` (chaining through the seed); a remaining
-/// part longer than 64 bytes is compressed the same way in one call, and anything
-/// shorter starts a new buffer.
+/// 64-byte inline buffer; `finish` returns `hassh64(buffer, seed)`. When a write
+/// does not fit, the buffered bytes are compressed into the seed with
+/// `seed = hassh64(buffer, seed)`; a write longer than 64 bytes is then
+/// compressed the same way in one call (and `finish` returns that result if
+/// nothing follows), and a shorter one starts a new buffer.
 ///
 /// Consequences:
 ///
@@ -61,7 +61,11 @@ const BUF: usize = 64;
 #[derive(Clone, Copy)]
 pub struct Hassh64Hasher {
     keys: Keys,
-    len: usize,
+    /// Bytes in `buf` (at most `BUF`).
+    len: u32,
+    /// Nonzero once anything was compressed into `keys.seed`. If the buffer is
+    /// then empty, `finish` returns that seed: it already is a hassh64 output.
+    chained: u32,
     buf: MaybeUninit<[u8; BUF]>,
 }
 
@@ -74,7 +78,7 @@ impl Hassh64Hasher {
 
     #[inline(always)]
     const fn with_keys(keys: Keys) -> Self {
-        Self { keys, len: 0, buf: MaybeUninit::uninit() }
+        Self { keys, len: 0, chained: 0, buf: MaybeUninit::uninit() }
     }
 
     #[inline(always)]
@@ -86,42 +90,74 @@ impl Hassh64Hasher {
     #[inline(always)]
     fn buffered(&self) -> &[u8] {
         // SAFETY: the first `len` bytes (len <= BUF) have always been written.
-        unsafe { core::slice::from_raw_parts(self.buf.as_ptr() as *const u8, self.len) }
+        unsafe { core::slice::from_raw_parts(self.buf.as_ptr() as *const u8, self.len as usize) }
     }
 
     /// Append a fixed-size little-endian integer.
     #[inline(always)]
     fn push<const N: usize>(&mut self, bytes: [u8; N]) {
-        if self.len + N <= BUF {
+        let len = self.len as usize;
+        if len + N <= BUF {
             // SAFETY: len + N <= BUF, so the write is in bounds.
-            unsafe { core::ptr::write_unaligned(self.buf_ptr().add(self.len) as *mut [u8; N], bytes) };
-            self.len += N;
+            unsafe { core::ptr::write_unaligned(self.buf_ptr().add(len) as *mut [u8; N], bytes) };
+            self.len += N as u32;
         } else {
             self.write_slow(&bytes);
         }
     }
 
+    /// A write that does not fit in the buffer. The buffered bytes (often just
+    /// a length prefix) are compressed into the seed with one short hash; a
+    /// write longer than the buffer is then hashed in one call with that seed,
+    /// and a shorter one starts a new buffer. Two chained hashes, not three.
     #[cold]
     #[inline(never)]
-    fn write_slow(&mut self, mut bytes: &[u8]) {
+    fn write_slow(&mut self, bytes: &[u8]) {
         if self.len > 0 {
-            let take = BUF - self.len;
-            // SAFETY: len + take == BUF; caller guarantees bytes.len() > take.
-            unsafe {
-                core::ptr::copy_nonoverlapping(bytes.as_ptr(), self.buf_ptr().add(self.len), take)
-            };
-            self.len = BUF;
             self.keys = Keys::new(hassh64(self.buffered(), self.keys.seed));
             self.len = 0;
-            bytes = &bytes[take..];
+            self.chained = 1;
         }
         if bytes.len() > BUF {
             self.keys = Keys::new(hassh64(bytes, self.keys.seed));
+            self.chained = 1;
         } else {
             // SAFETY: len == 0 and bytes.len() <= BUF.
-            unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), self.buf_ptr(), bytes.len()) };
-            self.len = bytes.len();
+            unsafe { copy_upto_buf(self.buf_ptr(), bytes) };
+            self.len = bytes.len() as u32;
         }
+    }
+}
+
+/// Copy `src` (at most `BUF` = 64 bytes) to `dst` with at most two fixed-size
+/// overlapping copies, instead of a variable-length `memcpy` call.
+///
+/// # Safety
+/// `dst` must be valid for `src.len()` bytes of writes, and not overlap `src`.
+#[inline(always)]
+unsafe fn copy_upto_buf(dst: *mut u8, src: &[u8]) {
+    #[inline(always)]
+    unsafe fn two<const W: usize>(dst: *mut u8, src: *const u8, n: usize) {
+        let head = core::ptr::read_unaligned(src as *const [u8; W]);
+        let tail = core::ptr::read_unaligned(src.add(n - W) as *const [u8; W]);
+        core::ptr::write_unaligned(dst as *mut [u8; W], head);
+        core::ptr::write_unaligned(dst.add(n - W) as *mut [u8; W], tail);
+    }
+    let n = src.len();
+    debug_assert!(n <= BUF);
+    let s = src.as_ptr();
+    if n >= 32 {
+        two::<32>(dst, s, n);
+    } else if n >= 16 {
+        two::<16>(dst, s, n);
+    } else if n >= 8 {
+        two::<8>(dst, s, n);
+    } else if n >= 4 {
+        two::<4>(dst, s, n);
+    } else if n > 0 {
+        *dst = *s;
+        *dst.add(n >> 1) = *s.add(n >> 1);
+        *dst.add(n - 1) = *s.add(n - 1);
     }
 }
 
@@ -145,6 +181,9 @@ impl Hasher for Hassh64Hasher {
     /// scalar paths are reachable.
     #[inline]
     fn finish(&self) -> u64 {
+        if self.len == 0 && self.chained != 0 {
+            return self.keys.seed;
+        }
         let data = self.buffered();
         let k = &self.keys;
         let n = data.len();
@@ -166,12 +205,11 @@ impl Hasher for Hassh64Hasher {
 
     #[inline]
     fn write(&mut self, bytes: &[u8]) {
-        if self.len + bytes.len() <= BUF {
+        let len = self.len as usize;
+        if len + bytes.len() <= BUF {
             // SAFETY: the copy ends at len + bytes.len() <= BUF.
-            unsafe {
-                core::ptr::copy_nonoverlapping(bytes.as_ptr(), self.buf_ptr().add(self.len), bytes.len())
-            };
-            self.len += bytes.len();
+            unsafe { copy_upto_buf(self.buf_ptr().add(len), bytes) };
+            self.len += bytes.len() as u32;
         } else {
             self.write_slow(bytes);
         }
