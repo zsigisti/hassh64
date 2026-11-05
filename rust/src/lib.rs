@@ -32,8 +32,8 @@
 //!
 //! ## Features
 //!
-//! * `std` (default): run-time CPU detection, [`RandomState`] and the
-//!   [`HashMap`] / [`HashSet`] aliases. Without it the crate is `#![no_std]`
+//! * `std` (default): run-time CPU detection, `RandomState` and the
+//!   `HashMap` / `HashSet` aliases. Without it the crate is `#![no_std]`
 //!   and needs no allocator.
 
 #![no_std]

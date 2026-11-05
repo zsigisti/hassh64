@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.14)
-project(hassh64 VERSION 1.0.0 LANGUAGES C)
+project(hassh64 VERSION 1.0.1 LANGUAGES C)
 
 # Header-only. Use with add_subdirectory() or FetchContent, then
 #   target_link_libraries(your_target PRIVATE hassh64::hassh64)
@@ -19,6 +19,9 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
         add_executable(hassh64_cli tools/hassh64.c)
         set_target_properties(hassh64_cli PROPERTIES OUTPUT_NAME hassh64)
         target_link_libraries(hassh64_cli PRIVATE hassh64)
+        if(WIN32)
+            target_link_libraries(hassh64_cli PRIVATE shell32)
+        endif()
         add_test(NAME cli COMMAND hassh64_cli -s 42 hello)
         set_tests_properties(cli PROPERTIES PASS_REGULAR_EXPRESSION "^825305b7d83ed2a7")
     endif()

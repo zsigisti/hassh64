@@ -266,7 +266,7 @@ impl Hasher for Hassh64Hasher {
 }
 
 /// A [`BuildHasher`] with a fixed seed. Deterministic across runs and platforms;
-/// `Default` uses seed 0. Use [`RandomState`](crate::RandomState) (feature `std`)
+/// `Default` uses seed 0. Use `RandomState` (feature `std`)
 /// for a per-process random seed when keys may come from an adversary (bearing in
 /// mind that hassh64 makes no HashDoS-resistance claim).
 ///
