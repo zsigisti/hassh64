@@ -4,3 +4,4 @@ deps/
 *.o
 *.obj
 __pycache__/
+rust/target/
