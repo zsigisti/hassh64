@@ -258,14 +258,19 @@ HASSH_INLINE uint64_t hassh_tail3(const uint8_t *q, size_t n) {
  * keys from the first multiply on. If length entered only at the end, pairs
  * such as lengths 8/11 or 40/48 could reach equal pre-final state for every
  * seed. Data-independent, so these multiplies overlap with the loads. */
-#define HASSH_SEEDKEYS(seed, len)                                                   \
-    const uint64_t s  = (seed) ^ hassh_fold((seed) ^ HASSH_P[0], HASSH_P[1]);       \
-    const uint64_t s2 = hassh_fold(s ^ (uint64_t)(len) ^ HASSH_P[6], HASSH_P[7]);    \
-    const uint64_t t  = (s ^ HASSH_P[5] ^ ((uint64_t)(len) << 56)) | 1
+HASSH_INLINE uint64_t hassh_seed_s(uint64_t seed) {
+    return seed ^ hassh_fold(seed ^ HASSH_P[0], HASSH_P[1]);
+}
+HASSH_INLINE uint64_t hassh_seed_s2(uint64_t s, size_t len) {
+    return hassh_fold(s ^ (uint64_t)len ^ HASSH_P[6], HASSH_P[7]);
+}
+#define HASSH_SEEDKEYS(s, len) const uint64_t t = ((s) ^ HASSH_P[5] ^ ((uint64_t)(len) << 56)) | 1
 
-HASSH_INLINE uint64_t hassh_small(const uint8_t *p, size_t len, uint64_t seed) {
+/* 0..32 bytes with the seed keys already derived: s = hassh_seed_s(seed),
+ * s2 = hassh_seed_s2(s, len). */
+HASSH_INLINE uint64_t hassh_small_k(const uint8_t *p, size_t len, uint64_t s, uint64_t s2) {
     uint64_t a, b;
-    HASSH_SEEDKEYS(seed, len);
+    HASSH_SEEDKEYS(s, len);
     if (len > 16) {
         uint64_t w0 = hassh_r32_head(p) | (hassh_r32(p + 4) << 32);
         uint64_t w1 = hassh_r64(p + 8);
@@ -303,6 +308,10 @@ HASSH_INLINE uint64_t hassh_small(const uint8_t *p, size_t len, uint64_t seed) {
     hassh_mul(a ^ HASSH_P[2] ^ s, b ^ HASSH_P[3] ^ s2 ^ (uint64_t)len, &lo, &hi);
     return hassh_fold(lo ^ HASSH_P[4], hi ^ t);
 }
+HASSH_INLINE uint64_t hassh_small(const uint8_t *p, size_t len, uint64_t seed) {
+    const uint64_t s = hassh_seed_s(seed);
+    return hassh_small_k(p, len, s, hassh_seed_s2(s, len));
+}
 
 /* 33..64 bytes, scalar: four independent multiplies over eight words, then
  * one. Two dependent multiplies, against 4+3 serial AES rounds for an AES
@@ -313,8 +322,8 @@ HASSH_INLINE uint64_t hassh_small(const uint8_t *p, size_t len, uint64_t seed) {
  * use (s, s2) and pair 2/3 use (s ^ s2, s). Every XOR difference between
  * the two key pairs, swapped or not, then contains s or s2 and depends on the
  * seed. */
-HASSH_INLINE uint64_t hassh_mid(const uint8_t *p, size_t len, uint64_t seed) {
-    HASSH_SEEDKEYS(seed, len);
+HASSH_INLINE uint64_t hassh_mid_k(const uint8_t *p, size_t len, uint64_t s, uint64_t s2) {
+    HASSH_SEEDKEYS(s, len);
     const uint64_t s3 = s ^ s2;
     const uint8_t *e = p + len;
     uint64_t x0 = hassh_fold(hassh_r64(p)      ^ HASSH_P[2] ^ s,  hassh_r64(p + 8)  ^ HASSH_P[3] ^ s2);
@@ -323,6 +332,10 @@ HASSH_INLINE uint64_t hassh_mid(const uint8_t *p, size_t len, uint64_t seed) {
     uint64_t x3 = hassh_fold(hassh_r64(e - 16) ^ HASSH_P[0] ^ s3, hassh_r64(e - 8)  ^ HASSH_P[1] ^ s);
     return hassh_fold(x0 ^ x2 ^ HASSH_P[4], x1 ^ x3 ^ t);
 }
+HASSH_INLINE uint64_t hassh_mid(const uint8_t *p, size_t len, uint64_t seed) {
+    const uint64_t s = hassh_seed_s(seed);
+    return hassh_mid_k(p, len, s, hassh_seed_s2(s, len));
+}
 
 /* 128-bit seed vector for the AES paths: (s, fold(s ^ len ^ P2, P3)).
  * The high half is jointly nonlinear in seed and length, so the difference
@@ -330,10 +343,12 @@ HASSH_INLINE uint64_t hassh_mid(const uint8_t *p, size_t len, uint64_t seed) {
  * pair would not do: SubBytes works bytewise, so seed and length bytes would
  * never mix and cross-length collisions would hold for every seed
  * (test/xlen.c). */
-HASSH_INLINE void hassh_seedvec(uint64_t seed, size_t len, uint64_t *lo, uint64_t *hi) {
-    const uint64_t s = seed ^ hassh_fold(seed ^ HASSH_P[0], HASSH_P[1]);
+HASSH_INLINE void hassh_seedvec_s(uint64_t s, size_t len, uint64_t *lo, uint64_t *hi) {
     *lo = s;
     *hi = hassh_fold(s ^ (uint64_t)len ^ HASSH_P[2], HASSH_P[3]);
+}
+HASSH_INLINE void hassh_seedvec(uint64_t seed, size_t len, uint64_t *lo, uint64_t *hi) {
+    hassh_seedvec_s(hassh_seed_s(seed), len, lo, hi);
 }
 
 /* ------------------------------------------------------- portable AES */
@@ -430,8 +445,9 @@ HASSH_INLINE hassh_blk hassh_init_p(int i, hassh_blk sv) {
 HASSH_INLINE hassh_blk hassh_sv_p(uint64_t seed, size_t len) {
     uint64_t lo, hi; hassh_seedvec(seed, len, &lo, &hi); return hassh_set_p(lo, hi);
 }
-static inline uint64_t hassh_large_portable(const uint8_t *p, size_t len, uint64_t seed) {
-    hassh_blk sv = hassh_sv_p(seed, len), acc[16];
+static inline uint64_t hassh_large_portable_s(const uint8_t *p, size_t len, uint64_t s) {
+    hassh_blk acc[16], sv;
+    { uint64_t lo, hi; hassh_seedvec_s(s, len, &lo, &hi); sv = hassh_set_p(lo, hi); }
     int lanes = len <= 128 ? 8 : 16;     /* only called for len > 64 */
     for (int i = 0; i < lanes; i++) acc[i] = hassh_init_p(i, sv);
     if (len <= 256) {
@@ -455,6 +471,9 @@ static inline uint64_t hassh_large_portable(const uint8_t *p, size_t len, uint64
     hassh_blk x = acc[0];
     for (int i = 1; i < lanes; i++) x = hassh_x_p(x, acc[i]);
     return hassh_out_p(hassh_fin_p(x));
+}
+static inline uint64_t hassh_large_portable(const uint8_t *p, size_t len, uint64_t seed) {
+    return hassh_large_portable_s(p, len, hassh_seed_s(seed));
 }
 #endif /* portable */
 
@@ -506,14 +525,14 @@ HASSH_SIMD_INLINE uint64_t hassh_out(hassh_v x) {
     return HV_FOLD(x);
 }
 #define HASSH_INIT(i) HV_ENC(HV_ENC(HV_XOR(HV_KEY(i), sv), HV_KEY(HASSH_INIT_KEY0)), HV_KEY(HASSH_INIT_KEY1))
-HASSH_SIMD_INLINE hassh_v hassh_sv(uint64_t seed, size_t len) {
-    uint64_t lo, hi; hassh_seedvec(seed, len, &lo, &hi); return HV_SET(lo, hi);
+HASSH_SIMD_INLINE hassh_v hassh_sv(uint64_t s, size_t len) {
+    uint64_t lo, hi; hassh_seedvec_s(s, len, &lo, &hi); return HV_SET(lo, hi);
 }
 
 #ifndef HASSH_VAES
 /* 65..128 bytes: 8 lanes, 4 from the head and 4 from the tail. */
-HASSH_SIMD_ENTRY uint64_t hassh_65_128(const uint8_t *p, size_t len, uint64_t seed) {
-    const hassh_v sv = hassh_sv(seed, len);
+HASSH_SIMD_ENTRY uint64_t hassh_65_128(const uint8_t *p, size_t len, uint64_t s) {
+    const hassh_v sv = hassh_sv(s, len);
     const uint8_t *e = p + len;
     hassh_v x = HV_XOR(HV_XOR(hassh_perm(HV_XOR(HASSH_INIT(0), HV_LD(p))),
                               hassh_perm(HV_XOR(HASSH_INIT(1), HV_LD(p + 16)))),
@@ -526,8 +545,8 @@ HASSH_SIMD_ENTRY uint64_t hassh_65_128(const uint8_t *p, size_t len, uint64_t se
     return hassh_out(HV_XOR(x, y));
 }
 /* 129+ bytes: 16 lanes. */
-HASSH_SIMD_BULK uint64_t hassh_large(const uint8_t *p, size_t len, uint64_t seed) {
-    const hassh_v sv = hassh_sv(seed, len);
+HASSH_SIMD_BULK uint64_t hassh_large(const uint8_t *p, size_t len, uint64_t s) {
+    const hassh_v sv = hassh_sv(s, len);
     hassh_v a[16];
     for (int i = 0; i < 16; i++) a[i] = HASSH_INIT(i);
     if (len <= 256) {
@@ -560,14 +579,14 @@ HASSH_INLINE __m256i hassh_init2(int j, __m256i sv) {
                                      _mm256_broadcastsi128_si256(HV_KEY(HASSH_INIT_KEY0)));
     return _mm256_aesenc_epi128(x, _mm256_broadcastsi128_si256(HV_KEY(HASSH_INIT_KEY1)));
 }
-HASSH_INLINE __m256i hassh_sv2(uint64_t seed, size_t len) {
-    return _mm256_broadcastsi128_si256(hassh_sv(seed, len));
+HASSH_INLINE __m256i hassh_sv2(uint64_t s, size_t len) {
+    return _mm256_broadcastsi128_si256(hassh_sv(s, len));
 }
 HASSH_INLINE uint64_t hassh_out2(__m256i x) {
     return hassh_out(_mm_xor_si128(_mm256_castsi256_si128(x), _mm256_extracti128_si256(x, 1)));
 }
-HASSH_INLINE uint64_t hassh_65_128(const uint8_t *p, size_t len, uint64_t seed) {
-    const __m256i sv = hassh_sv2(seed, len);
+HASSH_INLINE uint64_t hassh_65_128(const uint8_t *p, size_t len, uint64_t s) {
+    const __m256i sv = hassh_sv2(s, len);
     const uint8_t *e = p + len;
     __m256i a = hassh_perm2(_mm256_xor_si256(hassh_init2(0, sv), hassh_ld2(p)));
     __m256i b = hassh_perm2(_mm256_xor_si256(hassh_init2(1, sv), hassh_ld2(p + 32)));
@@ -575,8 +594,8 @@ HASSH_INLINE uint64_t hassh_65_128(const uint8_t *p, size_t len, uint64_t seed) 
     __m256i d = hassh_perm2(_mm256_xor_si256(hassh_init2(3, sv), hassh_ld2(e - 32)));
     return hassh_out2(_mm256_xor_si256(_mm256_xor_si256(a, b), _mm256_xor_si256(c, d)));
 }
-static inline uint64_t hassh_large(const uint8_t *p, size_t len, uint64_t seed) {
-    const __m256i sv = hassh_sv2(seed, len);
+static inline uint64_t hassh_large(const uint8_t *p, size_t len, uint64_t s) {
+    const __m256i sv = hassh_sv2(s, len);
     __m256i a[8];
     for (int j = 0; j < 8; j++) a[j] = hassh_init2(j, sv);
     if (len <= 256) {
@@ -620,20 +639,53 @@ HASSH_INLINE int hassh_cpu_aes(void) {
 }
 #endif
 
-HASSH_INLINE uint64_t hassh64(const void *data, size_t len, uint64_t seed) {
-    const uint8_t *p = (const uint8_t *)data;
-    if (HASSH_LIKELY(len <= 32)) return hassh_small(p, len, seed);
-    if (len <= 64) return hassh_mid(p, len, seed);
+/* 65+ bytes with s = hassh_seed_s(seed). */
+HASSH_INLINE uint64_t hassh_over64(const uint8_t *p, size_t len, uint64_t s) {
 #if defined(HASSH_DISPATCH)
     if (hassh_cpu_aes())
-        return len <= 128 ? hassh_65_128(p, len, seed) : hassh_large(p, len, seed);
-    return hassh_large_portable(p, len, seed);
+        return len <= 128 ? hassh_65_128(p, len, s) : hassh_large(p, len, s);
+    return hassh_large_portable_s(p, len, s);
 #elif defined(HASSH_SIMD)
-    if (len <= 128) return hassh_65_128(p, len, seed);
-    return hassh_large(p, len, seed);
+    if (len <= 128) return hassh_65_128(p, len, s);
+    return hassh_large(p, len, s);
 #else
-    return hassh_large_portable(p, len, seed);
+    return hassh_large_portable_s(p, len, s);
 #endif
+}
+
+HASSH_INLINE uint64_t hassh64(const void *data, size_t len, uint64_t seed) {
+    const uint8_t *p = (const uint8_t *)data;
+    const uint64_t s = hassh_seed_s(seed);
+    if (HASSH_LIKELY(len <= 32)) return hassh_small_k(p, len, s, hassh_seed_s2(s, len));
+    if (len <= 64) return hassh_mid_k(p, len, s, hassh_seed_s2(s, len));
+    return hassh_over64(p, len, s);
+}
+
+/* Prepared seed. A hash table hashes millions of keys with one seed, so the
+ * seed-dependent keys can be derived once instead of on every call:
+ *
+ *     hassh64_key k;
+ *     hassh64_key_init(&k, seed);
+ *     uint64_t h = hassh64_keyed(&k, data, len);   // == hassh64(data, len, seed)
+ *
+ * The result is always identical to hassh64(); only the work per call drops
+ * (two dependent multiplies fewer for inputs up to 64 bytes, one above). The
+ * key holds 66 words (528 bytes); keep one per seed, not one per call. */
+typedef struct hassh64_key {
+    uint64_t s;
+    uint64_t s2[65];   /* hassh_seed_s2(s, len) for len 0..64 */
+} hassh64_key;
+
+static inline void hassh64_key_init(hassh64_key *k, uint64_t seed) {
+    k->s = hassh_seed_s(seed);
+    for (size_t len = 0; len <= 64; len++) k->s2[len] = hassh_seed_s2(k->s, len);
+}
+
+HASSH_INLINE uint64_t hassh64_keyed(const hassh64_key *k, const void *data, size_t len) {
+    const uint8_t *p = (const uint8_t *)data;
+    if (HASSH_LIKELY(len <= 32)) return hassh_small_k(p, len, k->s, k->s2[len]);
+    if (len <= 64) return hassh_mid_k(p, len, k->s, k->s2[len]);
+    return hassh_over64(p, len, k->s);
 }
 
 /* Internal macros stay internal. HASSH_P, HASSH_K and the hassh_* helpers

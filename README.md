@@ -59,6 +59,15 @@ machine.
 compiles warning-free under GCC and Clang (`-Wall -Wextra -pedantic`, and Clang `-Weverything`
 apart from style-only warnings).
 
+**Many keys, one seed (hash tables).** Derive the seed-dependent keys once and reuse them.
+The result is always identical to `hassh64()`; each call just does less work:
+
+```c
+hassh64_key k;
+hassh64_key_init(&k, seed);                 /* once per seed (528 bytes) */
+uint64_t h = hassh64_keyed(&k, data, len);  /* == hassh64(data, len, seed) */
+```
+
 **CMake.**
 
 ```cmake

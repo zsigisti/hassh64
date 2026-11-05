@@ -14,6 +14,11 @@ int main(void) {
     size_t n = sizeof HASSH_VECTORS / sizeof HASSH_VECTORS[0], bad = 0;
     for (size_t i = 0; i < n; i++) {
         uint64_t h = hassh64(m, HASSH_VECTORS[i].len, HASSH_VECTORS[i].seed);
+        hassh64_key k;
+        hassh64_key_init(&k, HASSH_VECTORS[i].seed);
+        if (hassh64_keyed(&k, m, HASSH_VECTORS[i].len) != h) {
+            if (bad++ < 5) printf("KEYED MISMATCH len=%u\n", HASSH_VECTORS[i].len);
+        }
         if (h != HASSH_VECTORS[i].hash) {
             if (bad++ < 5)
                 printf("MISMATCH len=%u seed=%016llx got %016llx want %016llx\n", HASSH_VECTORS[i].len,
