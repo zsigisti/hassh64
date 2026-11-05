@@ -15,12 +15,12 @@ REGISTER_FAMILY(hassh,
  );
 
 REGISTER_HASH(hassh_64,
-   $.desc            = "hassh64 (AES + 128-bit multiply)",
+   $.desc            = "hassh64 2.0 (AES + 128-bit multiply)",
    $.hash_flags      = FLAG_HASH_AES_BASED | FLAG_HASH_ENDIAN_INDEPENDENT,
    $.impl_flags      = FLAG_IMPL_LICENSE_MIT | FLAG_IMPL_CANONICAL_LE | FLAG_IMPL_MULTIPLY_64_128,
    $.bits            = 64,
-   $.verification_LE = 0xEE422269,
-   $.verification_BE = 0xB21A0EB8,
+   $.verification_LE = 0x8628ECA5,
+   $.verification_BE = 0x871FFBFF,
    $.hashfn_native   = hassh64_smh<false>,
    $.hashfn_bswap    = hassh64_smh<true>
  );

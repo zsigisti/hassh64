@@ -1,4 +1,4 @@
-# hassh64 1.x specification
+# hassh64 2.x specification
 
 This document defines hassh64 completely, so it can be implemented in any language without
 reading `hassh.h`. An implementation is correct when it reproduces every entry of
@@ -127,10 +127,11 @@ round key `48692853686179295b477565726f6e5d` (both as bytes 0..15 in hex) give
 Derived functions:
 
 ```
-perm(x) = aesenc(aesenc(aesenc(aesenc(x, key(16)), key(17)), key(18)), key(19))
+perm(x) = aesenc(aesenc(aesenc(x, key(16)), key(17)), key(18))
 fin(x)  = aesenc(aesenc(aesenc(x, key(24)), key(25)), key(26))
-sv      = blk(s, fold(s ^ len ^ P[2], P[3]))
+sv      = blk(s, fold(s ^ P[2], P[3]))
 init(i) = aesenc(aesenc(key(i) ^ sv, key(30)), key(31))
+lv      = aesenc(aesenc(blk(fold(s ^ len ^ P[4], P[5]), fold(s ^ len ^ P[6], P[7])), key(30)), key(31))
 out(x)  = lo ^ hi, where x = blk(lo, hi)
 ```
 
@@ -159,7 +160,7 @@ Lane `i` starts as `acc[i] = init(i)`. Absorbing block `d` into lane `i` means
 Finally:
 
 ```
-x = acc[0] ^ acc[1] ^ ... ^ acc[lanes - 1]
+x = acc[0] ^ acc[1] ^ ... ^ acc[lanes - 1] ^ lv
 return out(fin(x))
 ```
 
@@ -175,5 +176,7 @@ return out(fin(x))
 
 ## Versioning
 
-The output for every input is frozen for all 1.x releases. Any change to any output, on any
+The output for every input is frozen for all 2.x releases. 2.x differs from 1.x only for inputs
+longer than 64 bytes: 3 rounds per block instead of 4, lane starts that depend on the seed alone,
+and the length vector `lv`. Any change to any output, on any
 input, makes a new major version.

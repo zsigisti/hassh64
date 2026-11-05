@@ -3,6 +3,30 @@
 All notable changes to this project are documented here. hassh64 follows
 [Semantic Versioning](https://semver.org/): any change to the hash output is a new major version.
 
+## [2.0.0] - unreleased
+
+**Output changes for inputs longer than 64 bytes.** Inputs of up to 64 bytes hash exactly as in
+1.x. New test vectors in `test/vectors.h`; `SPEC.md` describes 2.x.
+
+### Changed
+- 3 AES rounds per 16-byte block instead of 4: bulk speed +29% (18.7 -> 24.1 bytes/cycle in
+  SMHasher3), throughput on 128-512-byte keys about 40% better. Cost: fixed input pairs that
+  collide for about 2^-51 of seeds (1.x: none; ideal: 2^-64). See README, Security.
+- Lane starts depend on the seed only; the length enters through a length vector (two AES
+  rounds over two seed-and-length folds) XORed in before the final rounds.
+- `hassh64_key` also precomputes the 16 lane starts: 65-256-byte keys with a prepared seed are
+  17-28% faster than 1.x.
+- Passes SMHasher3 `--extra` 252/252, and every attack regression test.
+
+### Tried and rejected
+- 2 AES rounds per block (68% faster in bulk): real 64-bit collisions in SMHasher3's Sparse test.
+- 2 final rounds instead of 3: passes 252/252, but saves only about 0.7 ns above 64 bytes.
+
+## [1.1.0] - unreleased
+
+### Added
+- Prepared-seed API: `hassh64_key_init` / `hassh64_keyed`, identical output to `hassh64()`.
+
 ## [1.0.1] - 2026-11-05
 
 No hash output changes: every 1.0.0 test vector still passes.
@@ -36,5 +60,6 @@ First release.
 - `hassh64` command-line tool, with prebuilt binaries for Linux, macOS and Windows.
 - CMake package (`hassh64::hassh64`), pure-Python reference port, CI on Linux, macOS and Windows.
 
+[2.0.0]: https://github.com/zsigisti/hassh64/tree/v2
 [1.0.1]: https://github.com/zsigisti/hassh64/releases/tag/v1.0.1
 [1.0.0]: https://github.com/zsigisti/hassh64/releases/tag/v1.0.0

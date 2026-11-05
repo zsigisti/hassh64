@@ -72,7 +72,7 @@ uint64_t h = hassh64_keyed(&k, data, len);  /* == hassh64(data, len, seed) */
 
 ```cmake
 include(FetchContent)
-FetchContent_Declare(hassh64 GIT_REPOSITORY https://github.com/zsigisti/hassh64 GIT_TAG v1.0.1)
+FetchContent_Declare(hassh64 GIT_REPOSITORY https://github.com/zsigisti/hassh64 GIT_TAG v2.0.0)
 FetchContent_MakeAvailable(hassh64)
 target_link_libraries(your_target PRIVATE hassh64::hassh64)
 ```
@@ -111,33 +111,39 @@ Measured on an Intel Core Ultra 7 265KF (Arrow Lake), one P-core, Linux, GCC 16,
 **Quality:** SMHasher3 `--extra` (the test set behind SMHasher3's published results table):
 **252 / 252 pass.**
 
-**Speed:** SMHasher3 `--test=Speed`, pinned to one core. Rows marked * are the median of 3
-back-to-back runs, which agreed to within 0.1%. The other two rows are one run each, from
-the same day and machine.
+**Speed:** SMHasher3 `--test=Speed`, pinned to one core. hassh64 2.0, 1.x and gxhash were
+measured on 2026-11-05, the other rows on 2026-11-04, same machine and build; repeat runs
+agree to within 1%.
 
 | hash | SMHasher3 result | small keys 1–31 B (cycles/hash, lower is better) | bulk 256 KiB (bytes/cycle, higher is better) |
 |---|---|---:|---:|
-| **hassh64** * | **pass** | **16.3** | **18.2** |
-| a5hash * | pass | 18.1 | 3.0 |
+| **hassh64 2.0** | **pass** | **16.4** | **24.1** |
+| hassh64 1.x | pass | 16.4 | 18.7 |
+| a5hash | pass | 18.1 | 3.0 |
 | MuseAir.bfast | pass | 18.7 | 10.4 |
-| rapidhash * | pass | 28.1 | 13.1 |
-| MeowHash.64 * | pass | 54.2 | 16.7 |
+| rapidhash | pass | 28.1 | 13.1 |
+| MeowHash.64 | pass | 54.2 | 16.7 |
 | XXH3-64 | fails 27 tests | 28.1 | 19.7 |
-| gxhash-64 * | fails 24 tests | 30.7 | 23.1 |
+| gxhash-64 | fails 24 tests | 30.3 | 23.5 |
 
 Pass/fail for the other hashes is from SMHasher3's published results table.
 
-**Inlined benchmark** (`make bench`; keys not freshly written; ns per hash, latency | throughput):
+**Inlined benchmark** (`make bench`, hassh64 2.0; keys not freshly written; the seed changes on
+every call; ns per hash, latency | throughput):
 
 | len | hassh64 | xxh3 | rapidhash | wyhash | gxhash |
 |---:|---|---|---|---|---|
-| 8 | 4.39 \| 1.12 | 4.77 \| 1.32 | 4.01 \| 0.94 | 5.36 \| 1.18 | 5.10 \| 0.59 |
-| 32 | 6.68 \| 1.97 | 4.82 \| 1.79 | 5.49 \| 1.48 | 5.33 \| 1.53 | 6.68 \| 0.81 |
-| 64 | 6.31 \| 2.34 | 6.11 \| 2.61 | 8.15 \| 2.39 | 6.92 \| 2.21 | 9.07 \| 1.10 |
-| 128 | 11.24 \| 2.85 | 7.41 \| 4.40 | 8.43 \| 3.76 | 10.30 \| 4.05 | 9.53 \| 1.98 |
-| 256 | 13.73 \| 5.21 | 17.91 \| 10.01 | 12.17 \| 6.63 | 13.22 \| 7.05 | 13.26 \| 2.84 |
-| 512 | 17.98 \| 8.82 | 20.05 \| 11.15 | 19.58 \| 12.71 | 23.07 \| 14.76 | 14.51 \| 4.87 |
-| 256 KiB | 69 GB/s | 75 GB/s | 48 GB/s | 29 GB/s | 97 GB/s |
+| 8 | 4.26 \| 1.07 | 4.44 \| 1.30 | 3.94 \| 0.91 | 5.14 \| 1.16 | 5.02 \| 0.59 |
+| 32 | 6.42 \| 1.95 | 4.71 \| 1.68 | 5.32 \| 1.38 | 5.20 \| 1.52 | 6.56 \| 0.79 |
+| 64 | 6.32 \| 2.31 | 6.12 \| 2.63 | 8.23 \| 2.38 | 6.80 \| 2.27 | 9.02 \| 1.03 |
+| 128 | 11.64 \| 1.78 | 7.47 \| 4.38 | 8.41 \| 3.84 | 9.79 \| 3.89 | 9.49 \| 2.00 |
+| 256 | 13.65 \| 3.00 | 18.33 \| 9.83 | 12.08 \| 6.58 | 12.95 \| 7.04 | 12.63 \| 2.81 |
+| 512 | 16.93 \| 5.37 | 19.97 \| 11.01 | 19.87 \| 12.83 | 22.41 \| 14.88 | 14.59 \| 4.86 |
+| 256 KiB | 90 GB/s | 77 GB/s | 47 GB/s | 29 GB/s | 97 GB/s |
+
+Against 1.x: bulk +29%, and throughput for 128–512-byte keys about 40% better (128 B: 2.85 →
+1.78 ns, 256 B: 5.21 → 3.00 ns). With a prepared seed (`hassh64_keyed`), 65–256-byte keys
+hashed back to back are 17–28% faster than 1.x.
 
 ### How far to trust these numbers
 
@@ -148,7 +154,8 @@ Pass/fail for the other hashes is from SMHasher3's published results table.
   hashes it straight away. hassh64 is built to avoid the store-forwarding stall this causes
   (a5hash does the same). With keys that were not just written, the inlined benchmark shows
   rapidhash and xxh3 slightly faster on 8–32 bytes.
-* **65–128 bytes is the weak spot** (11.2 ns latency, against 7.4–10.3 ns for the others).
+* **65–128-byte latency is still the weak spot** when the seed changes on every call (11.3–11.7
+  ns, against 6.9–10.9 ns for the others). With a fixed seed it is about 10 ns.
 * SMHasher3 "cycles" are TSC ticks, not core clock cycles. They are only comparable within
   one session on one machine, which is how every row above was measured.
 * The inlined benchmark was written by the same AI that wrote the hash. The gxhash numbers in
@@ -157,7 +164,8 @@ Pass/fail for the other hashes is from SMHasher3's published results table.
 ## When to use something else
 
 * **Untrusted keys on a server** (HashDoS): use SipHash or another keyed PRF.
-* **gxhash** is faster in bulk (about 23 vs 18 bytes/cycle here), but it fails 24 SMHasher3
+* **gxhash** is about as fast in bulk as hassh64 2.0 (23.5 vs 24.1 bytes/cycle here) and has
+  higher throughput on short keys, but it fails 24 SMHasher3
   tests. Those include real 64-bit collisions on long sparse keys (2048-byte keys with up to 2
   bits set) and on 4096-byte keys with a single non-zero byte. On all-zero keys, it gave 4,160
   exact collisions across 4,160 seeds where 0 are expected, so the seed does not do its job
@@ -180,6 +188,12 @@ operands, swapped AES lanes, length changes, 256-way multicollisions). Every pai
 collide under any of 65,541 seeds. Passing rules out those attacks, nothing more. No human
 cryptographer has analysed it.
 
+**2.x trades some margin for speed.** With 3 AES rounds per block, the best 3-round
+differential an AI reviewer found gives fixed pairs of inputs over 64 bytes that collide for
+about 2^-51 of seeds, against the ideal 2^-64. That is still far too rare to exploit (an
+attacker would need around 2^51 tries against one seed), but 1.x, with 4 rounds per block, had
+no such pairs. If that margin matters to you, stay on 1.x.
+
 Known residual weaknesses, each affecting about 2^-64 of seeds:
 
 * If `s`, `s2` or `s ^ s2` happens to be 0, one operand is keyed only by constants for that seed.
@@ -198,16 +212,19 @@ Known residual weaknesses, each affecting about 2^-64 of seeds:
 * **33–64 bytes, scalar.** Four parallel multiplies, then one. The two pairs that are XORed use
   key pairs `(s, s2)` and `(s^s2, s)`, which differ by a seed-dependent value even when commuted.
 * **65+ bytes, AES.** 8 lanes (65–128 bytes) or 16 lanes of 128 bits. Each lane starts from two
-  AES rounds of `K_i ^ (s, fold(s ^ len))`. Each 16-byte block runs `acc = P(acc ^ block)`, where
-  P is 4 AES rounds, so a data difference passes at least 25 active S-boxes before it can meet
-  another. The lanes are XORed, then get 3 more rounds and a 64-bit fold. Those 3 rounds remove
-  the XOR's statistical linearity, but they are a public bijection and add no collision
-  resistance. Inputs over 256 bytes use 256-byte stripes, the last aligned to the end.
+  AES rounds of `K_i ^ (s, fold(s))`, which depend on the seed only, so `hassh64_keyed`
+  precomputes them. Each 16-byte block runs `acc = P(acc ^ block)`, where P is 3 AES rounds, so
+  a data difference passes at least 9 active S-boxes before it can meet another. The lanes are
+  XORed together with a length vector (two AES rounds over two seed-and-length folds), then get
+  3 more rounds and a 64-bit fold. Those 3 rounds remove the XOR's statistical linearity, but
+  they are a public bijection and add no collision resistance. Inputs over 256 bytes use
+  256-byte stripes, the last aligned to the end.
 
 Things that were tried and fail:
 
-1. **1 AES round per block** (gxhash-style) fails SMHasher3's Sparse test. A 1-round
-   difference has about 8 bits of entropy, so two blocks cancel by birthday.
+1. **1 or 2 AES rounds per block** fail SMHasher3's Sparse test with real 64-bit collisions:
+   a difference through 1 or 2 rounds is predictable enough that two blocks cancel. 2 rounds
+   would have been 68% faster in bulk than 1.x.
 2. **Plain XOR to combine lanes, without a finalizer,** fails the differential-distribution
    test, because h(0)⊕h(A)⊕h(B)⊕h(A⊕B) = 0.
 3. **Multiplying short keys only by constants** gives a small Bitflip bias on 4-byte keys.
@@ -233,9 +250,10 @@ For SMHasher3, copy `smhasher3/hassh.cpp` into `deps/smhasher3/hashes/`, add it 
 
 ## Versioning
 
-The output for every input is frozen for all 1.x releases, pinned by `test/vectors.h`. Any
+The output for every input is frozen for all 2.x releases, pinned by `test/vectors.h`. Any
 output change, on any input, means a new major version. `HASSH_VERSION_MAJOR` tells you which
-one you have.
+one you have. 2.x and 1.x agree for inputs of up to 64 bytes and differ above that; 1.x stays
+available on the `main` history and its [1.0.1 release](https://github.com/zsigisti/hassh64/releases/tag/v1.0.1).
 
 ## License
 

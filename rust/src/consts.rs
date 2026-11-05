@@ -27,8 +27,8 @@ pub(crate) const K: [u64; 64] = [
 ];
 
 /// Round keys used by the AES section.
-pub(crate) const ROUND_KEY0: usize = 16; // perm: keys 16..19
-pub(crate) const ROUNDS: usize = 4;
+pub(crate) const ROUND_KEY0: usize = 16; // perm: keys 16..18
+pub(crate) const ROUNDS: usize = 3;
 pub(crate) const FIN_KEY0: usize = 24; // fin: keys 24..26
 pub(crate) const FIN_ROUNDS: usize = 3;
 pub(crate) const INIT_KEY0: usize = 30;

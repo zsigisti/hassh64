@@ -5,8 +5,8 @@ welcome.
 
 ## Ground rules
 
-- **The 1.x output is frozen.** `test/vectors.h` must keep passing. A change that alters any hash
-  value is a 2.0 discussion, not a pull request.
+- **The 2.x output is frozen.** `test/vectors.h` must keep passing. A change that alters any hash
+  value is a 3.0 discussion, not a pull request.
 - **Every path must agree.** Changes to `hassh.h` must pass `make test` (all x86 paths, sanitizers,
   attack suites) and, when possible, `make test-cross` and `make test-arm`.
 - **Benchmarks need context:** CPU model, compiler and flags, and the exact command. Run all

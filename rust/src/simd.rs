@@ -9,7 +9,7 @@
 macro_rules! simd_core {
     ($(#[$tf:meta])*) => {
         use crate::consts::{FIN_KEY0, FIN_ROUNDS, INIT_KEY0, INIT_KEY1, ROUNDS, ROUND_KEY0};
-        use crate::scalar::seed_vec;
+        use crate::scalar::{len_vec, seed_s, seed_vec};
 
         $(#[$tf])*
         #[inline]
@@ -44,8 +44,12 @@ macro_rules! simd_core {
         pub(crate) unsafe fn large(data: &[u8], seed: u64) -> u64 {
             let len = data.len();
             debug_assert!(len > 64);
-            let (lo, hi) = seed_vec(seed, len as u64);
+            let s = seed_s(seed);
+            let (lo, hi) = seed_vec(s);
             let sv = set(lo, hi);
+            // Length vector: independent of the lanes, so it runs in parallel.
+            let (llo, lhi) = len_vec(s, len as u64);
+            let lv = enc(enc(set(llo, lhi), key(INIT_KEY0)), key(INIT_KEY1));
             let p = data.as_ptr();
             let e = p.add(len);
             if len <= 128 {
@@ -58,7 +62,7 @@ macro_rules! simd_core {
                     xor(perm(xor(init(4, sv), ld(e.sub(64)))), perm(xor(init(5, sv), ld(e.sub(48))))),
                     xor(perm(xor(init(6, sv), ld(e.sub(32)))), perm(xor(init(7, sv), ld(e.sub(16))))),
                 );
-                return out(xor(x, y));
+                return out(xor(xor(x, y), lv));
             }
             let mut a: [V; 16] = [
                 init(0, sv), init(1, sv), init(2, sv), init(3, sv),
@@ -93,7 +97,7 @@ macro_rules! simd_core {
             for ai in &a[1..] {
                 x = xor(x, *ai);
             }
-            out(x)
+            out(xor(x, lv))
         }
     };
 }

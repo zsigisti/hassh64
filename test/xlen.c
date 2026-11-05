@@ -18,7 +18,7 @@
 static uint64_t rng = 0x243f6a8885a308d3ull;
 static uint64_t rnd(void) { rng ^= rng << 13; rng ^= rng >> 7; rng ^= rng << 17; return rng * 0x2545F4914F6CDD1Dull; }
 
-static hassh_blk start(int i, uint64_t seed, size_t L) { return hassh_init_p(i, hassh_sv_p(seed, L)); }
+static hassh_blk start(int i, uint64_t seed, size_t L) { (void)L; return hassh_init_p(i, hassh_sv_p(seed)); }
 /* Attacker's guess of start_i(L1) ^ start_i(L2), computed at seed 0. */
 static hassh_blk D(int i, size_t L1, size_t L2) { return hassh_x_p(start(i, 0, L1), start(i, 0, L2)); }
 

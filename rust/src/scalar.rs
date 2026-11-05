@@ -158,9 +158,18 @@ pub(crate) fn mid_keyed(data: &[u8], s: u64, s2: u64) -> u64 {
     }
 }
 
-/// 128-bit seed vector for the AES section: (s, fold(s ^ len ^ P2, P3)).
+/// Seed vector for the AES section (2.x): (s, fold(s ^ P2, P3)). The lane
+/// starts depend on the seed only.
 #[inline(always)]
-pub(crate) fn seed_vec(seed: u64, len: u64) -> (u64, u64) {
-    let s = seed_s(seed);
-    (s, fold(s ^ len ^ P[2], P[3]))
+pub(crate) fn seed_vec(s: u64) -> (u64, u64) {
+    (s, fold(s ^ P[2], P[3]))
+}
+
+/// Length vector for the AES section (2.x), before its two AES rounds:
+/// (fold(s ^ len ^ P4, P5), fold(s ^ len ^ P6, P7)). Jointly nonlinear in
+/// seed and length, so the difference between two lengths' vectors depends
+/// on the seed.
+#[inline(always)]
+pub(crate) fn len_vec(s: u64, len: u64) -> (u64, u64) {
+    (fold(s ^ len ^ P[4], P[5]), fold(s ^ len ^ P[6], P[7]))
 }

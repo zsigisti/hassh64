@@ -2,7 +2,9 @@
 //!
 //! A fast, seeded, non-cryptographic 64-bit hash, in pure Rust. Output is
 //! bit-identical to the C reference (`hassh.h`) and the language-neutral
-//! `SPEC.md` on every platform, and is frozen for all 1.x releases.
+//! `SPEC.md` on every platform, and is frozen for all 2.x releases. 1.x outputs
+//! differ for inputs over 64 bytes (2.0 changed the AES section); inputs of
+//! 0..64 bytes hash the same in 1.x and 2.x.
 //!
 //! **AI-generated.** The hash, this crate and its tests were written by an AI
 //! (Anthropic's Claude, via Claude Code) under human direction and reviewed only
@@ -59,8 +61,8 @@ pub type HashMap<K, V> = std::collections::HashMap<K, V, RandomState>;
 #[cfg(feature = "std")]
 pub type HashSet<T> = std::collections::HashSet<T, RandomState>;
 
-/// Crate version; the output of [`hassh64`] is frozen for all 1.x versions.
-pub const VERSION: &str = "1.0.0";
+/// Crate version; the output of [`hassh64`] is frozen for all 2.x versions.
+pub const VERSION: &str = "2.0.0";
 
 /// Hash `data` with `seed`.
 ///

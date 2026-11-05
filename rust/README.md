@@ -2,7 +2,9 @@
 
 A fast, seeded, non-cryptographic 64-bit hash. Pure Rust, `#![no_std]`, no dependencies.
 Output is bit-identical to the C reference (`hassh.h`) and to [`SPEC.md`] on every platform,
-and frozen for all 1.x releases.
+and frozen for all 2.x releases. 1.x outputs differ for inputs over 64 bytes (2.0 changed the
+AES section: 3 rounds per block and a separate length vector); inputs of 0..64 bytes hash the
+same in 1.x and 2.x.
 
 > **AI-generated.** The hash design, this crate, its tests and its benchmarks were written by
 > an AI (Anthropic's Claude, via Claude Code) under human direction, and reviewed only by AI
@@ -64,7 +66,7 @@ The C header's 256-bit VAES path is not ported; it changes speed, not output.
 ## Benchmarks
 
 Intel Core Ultra 7 265KF, one core, `-C target-cpu=native`, criterion medians. Latency is one
-hash whose result feeds the next input, in ns (lower is better).
+hash whose result feeds the next input, in ns (lower is better). Measured on 2.0.0.
 
 Hashing a byte slice directly (one-shot functions):
 
@@ -74,9 +76,9 @@ Hashing a byte slice directly (one-shot functions):
 | 16 | 4.7 | 3.1 |
 | 32 | 6.2 | 5.5 |
 | 64 | 3.5 | 8.5 |
-| 128 | 12.0 | 5.0 |
-| 256 | 13.5 | 8.2 |
-| 1024 | 31.5 | 22.6 |
+| 128 | 11.9 | 5.1 |
+| 256 | 13.4 | 8.1 |
+| 1024 | 25.5 | 21.9 |
 
 Hashing a `&[u8]` through `BuildHasher::hash_one` (what a `HashMap<Vec<u8>, _>` does; adds a
 length prefix):
@@ -87,9 +89,9 @@ length prefix):
 | 16 | 10.6 | 3.2 | 5.1 |
 | 32 | 12.1 | 5.0 | 8.5 |
 | 64 | 12.7 | 6.4 | 9.7 |
-| 128 | 17.1 | 7.9 | 11.8 |
-| 256 | 24.4 | 12.1 | 13.0 |
-| 1024 | 40.8 | 25.1 | 21.2 |
+| 128 | 17.3 | 7.9 | 11.7 |
+| 256 | 21.5 | 11.9 | 12.7 |
+| 1024 | 33.8 | 24.6 | 20.6 |
 
 `HashMap<u64, u64>`, 4096 inserts then 4096 lookups, in µs:
 
@@ -100,7 +102,7 @@ length prefix):
 **hassh64 is not the fastest Rust hasher.** As a `HashMap` hasher it is about 1.6x slower than
 foldhash, ahash and rapidhash, and about 5x faster than std's SipHash. Its short paths are two
 to four dependent multiplies (part of the frozen algorithm, and what keeps SMHasher3's Bitflip
-test clean) where the others do one or two, and the C header's VAES path is not ported yet.
+test clean) where the others do one or two, and the C header's VAES path is not ported yet (2.0 cut 1 KiB from 31.5 to 25.5 ns).
 As a one-shot function it is the fastest here at 64 bytes and close at 8 and 32. Choose it for
 its SMHasher3 result and its identical output across languages and platforms, not for raw
 speed in Rust.

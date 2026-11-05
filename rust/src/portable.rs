@@ -2,7 +2,7 @@
 //! hardware paths are tested against; used on targets without AES instructions.
 
 use crate::consts::{FIN_KEY0, FIN_ROUNDS, INIT_KEY0, INIT_KEY1, K, ROUNDS, ROUND_KEY0};
-use crate::scalar::seed_vec;
+use crate::scalar::{len_vec, seed_s, seed_vec};
 
 type Blk = [u8; 16];
 
@@ -104,7 +104,8 @@ fn out(mut x: Blk) -> u64 {
 pub(crate) fn large(p: &[u8], seed: u64) -> u64 {
     let len = p.len();
     debug_assert!(len > 64);
-    let (svlo, svhi) = seed_vec(seed, len as u64);
+    let s = seed_s(seed);
+    let (svlo, svhi) = seed_vec(s);
     let sv = set(svlo, svhi);
     let lanes = if len <= 128 { 8 } else { 16 };
     let mut acc = [[0u8; 16]; 16];
@@ -138,5 +139,7 @@ pub(crate) fn large(p: &[u8], seed: u64) -> u64 {
     for a in acc.iter().take(lanes).skip(1) {
         x = xor(x, a);
     }
-    out(x)
+    let (lvlo, lvhi) = len_vec(s, len as u64);
+    let lv = aesenc(&aesenc(&set(lvlo, lvhi), &key(INIT_KEY0)), &key(INIT_KEY1));
+    out(xor(x, &lv))
 }

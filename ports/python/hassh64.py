@@ -1,4 +1,4 @@
-"""hassh64 1.x reference implementation in pure Python.
+"""hassh64 2.x reference implementation in pure Python.
 
 AI-generated: written by an AI agent from SPEC.md alone, without reading hassh.h, as a
 check that the spec is complete. Slow (software AES); meant for porting and testing,
@@ -148,11 +148,12 @@ def hassh64(p, seed=0):
         x3 = fold(r64(n - 16) ^ P[0] ^ s3, r64(n - 8) ^ P[1] ^ s)
         return fold(x0 ^ x2 ^ P[4], x1 ^ x3 ^ t)
 
-    k16, k17, k18, k19 = key(16), key(17), key(18), key(19)
+    k16, k17, k18 = key(16), key(17), key(18)
     k24, k25, k26, k30, k31 = key(24), key(25), key(26), key(30), key(31)
-    perm = lambda x: aesenc(aesenc(aesenc(aesenc(x, k16), k17), k18), k19)
+    perm = lambda x: aesenc(aesenc(aesenc(x, k16), k17), k18)
     fin = lambda x: aesenc(aesenc(aesenc(x, k24), k25), k26)
-    sv = blk(s, fold(s ^ L ^ P[2], P[3]))
+    sv = blk(s, fold(s ^ P[2], P[3]))
+    lv = aesenc(aesenc(blk(fold(s ^ L ^ P[4], P[5]), fold(s ^ L ^ P[6], P[7])), k30), k31)
     init = lambda i: aesenc(aesenc(bxor(key(i), sv), k30), k31)
     ld = lambda i: p[i:i + 16]
 
@@ -183,7 +184,7 @@ def hassh64(p, seed=0):
     x = bytes(16)
     for a in acc:
         x = bxor(x, a)
-    f = fin(x)
+    f = fin(bxor(x, lv))
     return int.from_bytes(f[:8], "little") ^ int.from_bytes(f[8:], "little")
 
 
