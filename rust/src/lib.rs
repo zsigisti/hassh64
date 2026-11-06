@@ -50,8 +50,10 @@ mod hasher;
 mod portable;
 mod scalar;
 mod simd;
+mod stream;
 
 pub use hasher::{Hassh64BuildHasher, Hassh64Hasher};
+pub use stream::Hassh64Stream;
 #[cfg(feature = "std")]
 pub use hasher::RandomState;
 
@@ -63,7 +65,7 @@ pub type HashMap<K, V> = std::collections::HashMap<K, V, RandomState>;
 pub type HashSet<T> = std::collections::HashSet<T, RandomState>;
 
 /// Crate version; the output of [`hassh64`] is frozen for all 2.x versions.
-pub const VERSION: &str = "2.0.0";
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Hash `data` with `seed`.
 ///

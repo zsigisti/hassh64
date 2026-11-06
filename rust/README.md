@@ -38,9 +38,24 @@ m.insert("two", 2);
 | item | what it is |
 |---|---|
 | `hassh64(data: &[u8], seed: u64) -> u64` | the hash; equal to C `hassh64(data, len, seed)` |
+| `Hassh64Stream` | streaming: `update` in pieces, `digest` == `hassh64` of the whole input; `std::io::Write` with `std` |
 | `Hassh64Hasher` | `core::hash::Hasher` (see below) |
 | `Hassh64BuildHasher` | `BuildHasher` with a fixed seed (`with_seed`, `Default` = seed 0) |
 | `RandomState`, `HashMap`, `HashSet` | random-seeded builder and std aliases (feature `std`) |
+
+### Streaming
+
+```rust
+use std::io;
+let mut st = hassh64::Hassh64Stream::new(seed);
+io::copy(&mut std::fs::File::open(path)?, &mut st)?;   // or st.update(chunk) by hand
+let h = st.digest();                                    // == hassh64(&whole_file, seed)
+```
+
+The result equals the one-shot hash for every way of splitting the input. Under 4 KiB the
+input is buffered; past that the LeMac absorber runs as data arrives, at one-shot speed for
+large chunks. `digest` does not consume the stream. Use this, not `Hassh64Hasher`, when the
+value must match `hassh64` (stored fingerprints, the C or SQL versions).
 
 ### The `Hasher` adapter
 

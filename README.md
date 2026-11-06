@@ -71,11 +71,27 @@ hassh64_key_init(&k, seed);                 /* once per seed (1072 bytes) */
 uint64_t h = hassh64_keyed(&k, data, len);  /* == hassh64(data, len, seed) */
 ```
 
+**Streaming (files, sockets, chunked data).** Feed the input in pieces of any size; the
+digest is exactly `hassh64()` of the whole input. The state is about 4.7 KiB with no pointers,
+so it can be copied, and `hassh64_digest` leaves it usable for more data. Past 4 KiB the
+LeMac absorber runs as data arrives, at one-shot speed for chunks of 64 KiB and up (115-120
+GB/s with VAES here), about 90 GB/s for 4 KiB chunks:
+
+```c
+hassh64_state st;
+hassh64_init(&st, seed);
+while ((n = fread(buf, 1, sizeof buf, f)) > 0) hassh64_update(&st, buf, n);
+uint64_t h = hassh64_digest(&st);           /* == hassh64(whole file, size, seed) */
+```
+
+Rust: `hassh64::Hassh64Stream` (`update` / `digest`, and `std::io::Write`, so
+`std::io::copy(&mut file, &mut stream)` works).
+
 **CMake.**
 
 ```cmake
 include(FetchContent)
-FetchContent_Declare(hassh64 GIT_REPOSITORY https://github.com/zsigisti/hassh64 GIT_TAG v2.1.1)
+FetchContent_Declare(hassh64 GIT_REPOSITORY https://github.com/zsigisti/hassh64 GIT_TAG v2.2.0)
 FetchContent_MakeAvailable(hassh64)
 target_link_libraries(your_target PRIVATE hassh64::hassh64)
 ```

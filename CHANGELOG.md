@@ -3,15 +3,28 @@
 All notable changes to this project are documented here. hassh64 follows
 [Semantic Versioning](https://semver.org/): any change to the hash output is a new major version.
 
-## [Unreleased]
+## [2.2.0] - 2026-11-07
+
+No output change: all 548 vectors are identical.
 
 ### Added
+- Streaming API: `hassh64_init` / `hassh64_update` / `hassh64_digest` in C and
+  `Hassh64Stream` (with `std::io::Write`) in Rust. The digest equals the one-shot hash for every
+  length and every way of splitting the input (`test/stream.c`, `rust/tests/stream.rs`: 33,551
+  length/chunking cases on the VAES, AES-NI, dispatch and portable paths, and under ASan).
+  Inputs under 4 KiB are buffered; past that the LeMac absorber runs as data arrives, absorbing
+  large updates straight from the caller's buffer: 1 MiB at 64 KiB chunks hashes at one-shot
+  speed (about 115 GB/s with VAES), 4 KiB chunks at about 90 GB/s.
 - `integrations/`: ready-to-use packaging with tests that check the same output everywhere:
   `kernel/` (freestanding guide for C and Rust kernels; build check for x86-64, AArch64,
   RISC-V, i686, RV32 and ARMv7 with no undefined symbols and no SIMD), `sqlite/` (loadable
   extension), `postgres/` (extension, PostgreSQL 13+), `cpp/` (`hassh::hash<T>` and
   `hassh::string_hash` for `std::unordered_map`). `make integrations` runs them. The README
   there also lists when hassh64 is the wrong choice, from trying it in real kernels.
+
+### Fixed
+- Rust: `hassh64::VERSION` said "2.0.0"; it now follows the crate version. CMake's project
+  version said 2.0.0 too.
 
 ## [2.1.1] - 2026-11-06
 

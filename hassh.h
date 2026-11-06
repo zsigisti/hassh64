@@ -1,5 +1,5 @@
 /*
- * hassh64 2.1.1: a fast, seeded, non-cryptographic 64-bit hash.
+ * hassh64 2.2.0: a fast, seeded, non-cryptographic 64-bit hash.
  * https://github.com/zsigisti/hassh64
  *
  * AI-generated: designed and written by an AI (Anthropic's Claude, via Claude
@@ -77,9 +77,9 @@
 #define HASSH_H
 
 #define HASSH_VERSION_MAJOR 2   /* bumped whenever any output changes */
-#define HASSH_VERSION_MINOR 1
-#define HASSH_VERSION_PATCH 1
-#define HASSH_VERSION "2.1.1"
+#define HASSH_VERSION_MINOR 2
+#define HASSH_VERSION_PATCH 0
+#define HASSH_VERSION "2.2.0"
 
 #include <stdint.h>
 #include <stddef.h>
@@ -1121,6 +1121,217 @@ HASSH_INLINE uint64_t hassh64_keyed(const hassh64_key *k, const void *data, size
     return hassh_over64(p, len, k->s, k->start, k->lstart);
 }
 
+/* ---------------------------------------------------------- streaming */
+/* Incremental hashing with exactly the one-shot result:
+ *
+ *     hassh64_state st;
+ *     hassh64_init(&st, seed);
+ *     hassh64_update(&st, chunk, n);      // any number of times, any sizes
+ *     uint64_t h = hassh64_digest(&st);   // == hassh64(all bytes, total, seed)
+ *
+ * hassh64_digest does not modify the state, so more data can follow. The
+ * state is about 4.7 KiB and holds no pointers (it can be copied).
+ *
+ * Inputs under HASSH_LONG_MIN bytes are buffered and hashed in one shot at
+ * the end, since their algorithm depends on the total length. From
+ * HASSH_LONG_MIN on, the LeMac absorber takes each 128-byte step once a byte
+ * after it is known (the final step is aligned to the end of the input), so
+ * memory and per-byte cost stay constant; large updates are absorbed straight
+ * from the caller's buffer. The LeMac state is kept in one byte layout (13
+ * slots of 32 bytes: S0..S8, R0, R1, R1^R2, RR; bytes 0..15 of a slot are
+ * state 0, 16..31 state 1), so every code path can continue it. */
+#define HASSH_ST_BUF HASSH_LONG_MIN
+typedef struct hassh64_state {
+    uint64_t seed, s;
+    uint64_t total;               /* bytes so far */
+    uint32_t pending;             /* bytes in buf not yet absorbed */
+    uint32_t lemac;               /* LeMac started (total > HASSH_ST_BUF) */
+    uint8_t  A[13 * 32];          /* LeMac state, layout above */
+    uint8_t  prev[128];           /* the 128 bytes before buf[0] once absorbed */
+    uint8_t  buf[HASSH_ST_BUF];
+} hassh64_state;
+
+#define HASSH_LM_LOAD(V, LD, A, j) do {                                          \
+        V##0 = LD((A) + 16 * (j));       V##1 = LD((A) + 32 + 16 * (j));          \
+        V##2 = LD((A) + 64 + 16 * (j));  V##3 = LD((A) + 96 + 16 * (j));          \
+        V##4 = LD((A) + 128 + 16 * (j)); V##5 = LD((A) + 160 + 16 * (j));         \
+        V##6 = LD((A) + 192 + 16 * (j)); V##7 = LD((A) + 224 + 16 * (j));         \
+        V##8 = LD((A) + 256 + 16 * (j)); V##r0 = LD((A) + 288 + 16 * (j));        \
+        V##r1 = LD((A) + 320 + 16 * (j)); V##r2 = LD((A) + 352 + 16 * (j));       \
+        V##q = LD((A) + 384 + 16 * (j));                                          \
+    } while (0)
+#define HASSH_LM_STORE(V, ST, A, j) do {                                         \
+        ST((A) + 16 * (j), V##0);       ST((A) + 32 + 16 * (j), V##1);            \
+        ST((A) + 64 + 16 * (j), V##2);  ST((A) + 96 + 16 * (j), V##3);            \
+        ST((A) + 128 + 16 * (j), V##4); ST((A) + 160 + 16 * (j), V##5);           \
+        ST((A) + 192 + 16 * (j), V##6); ST((A) + 224 + 16 * (j), V##7);           \
+        ST((A) + 256 + 16 * (j), V##8); ST((A) + 288 + 16 * (j), V##r0);          \
+        ST((A) + 320 + 16 * (j), V##r1); ST((A) + 352 + 16 * (j), V##r2);         \
+        ST((A) + 384 + 16 * (j), V##q);                                          \
+    } while (0)
+
+#if !defined(HASSH_HAVE_SIMD) || defined(HASSH_DISPATCH) || defined(HASSH_WANT_PORTABLE)
+/* n LeMac steps at q, q + 128, ... on the state A, portable. */
+static inline void hassh_lm_absorb_p(uint8_t *A, const uint8_t *q, size_t n) {
+    typedef hassh_blk hassh_lm_t;
+    for (int j = 0; j < 2; j++) {
+        HASSH_LM_VARS(hassh_blk, v);
+        HASSH_LM_LOAD(v, hassh_ld_p, A, j);
+        for (size_t k = 0; k < n; k++) {
+            const uint8_t *m = q + 128 * k + 16 * j;
+            HASSH_LM_STEP(v, hassh_ld_p(m), hassh_ld_p(m + 32), hassh_ld_p(m + 64), hassh_ld_p(m + 96),
+                          hassh_aesenc_p, hassh_x_p);
+        }
+        HASSH_LM_STORE(v, hassh_st_p, A, j);
+    }
+}
+/* Blank steps, compression, length vector and finalizer, portable. */
+static inline uint64_t hassh_lm_finish_p(const uint8_t *A, uint64_t s, uint64_t len) {
+    typedef hassh_blk hassh_lm_t;
+    hassh_blk z = {{0, 0}}, x = z;
+    for (int j = 0; j < 2; j++) {
+        HASSH_LM_VARS(hassh_blk, v);
+        HASSH_LM_LOAD(v, hassh_ld_p, A, j);
+        for (int b = 0; b < 4; b++) HASSH_LM_STEP(v, z, z, z, z, hassh_aesenc_p, hassh_x_p);
+        const hassh_blk w[9] = { v0, v1, v2, v3, v4, v5, v6, v7, v8 };
+        for (int i = 0; i < 9; i++) x = hassh_x_p(x, hassh_lm_comp_p(9 * j + i, w[i]));
+    }
+    { uint64_t lo, hi; hassh_lenvec_s(s, (size_t)len, &lo, &hi);
+      x = hassh_x_p(x, hassh_aesenc_p(hassh_aesenc_p(hassh_set_p(lo, hi), hassh_key_p(HASSH_INIT_KEY0)),
+                                      hassh_key_p(HASSH_INIT_KEY1))); }
+    return hassh_out_p(hassh_fin_p(x));
+}
+#endif
+
+#ifdef HASSH_SIMD
+#define HASSH_HV_ST(p, x) HV_ST(p, x)
+HASSH_SIMD_BULK void hassh_lm_absorb_v(uint8_t *A, const uint8_t *q, size_t n) {
+    typedef hassh_v hassh_lm_t;
+    HASSH_UNROLL for (int j = 0; j < 2; j++) {
+        HASSH_LM_VARS(hassh_v, v);
+        HASSH_LM_LOAD(v, HV_LD, A, j);
+        for (size_t k = 0; k < n; k++) {
+            const uint8_t *m = q + 128 * k + 16 * j;
+            HASSH_LM_STEP(v, HV_LD(m), HV_LD(m + 32), HV_LD(m + 64), HV_LD(m + 96), HV_ENC, HV_XOR);
+        }
+        HASSH_LM_STORE(v, HASSH_HV_ST, A, j);
+    }
+}
+HASSH_SIMD_BULK uint64_t hassh_lm_finish_v(const uint8_t *A, uint64_t s, uint64_t len) {
+    typedef hassh_v hassh_lm_t;
+    const hassh_v z = HV_XOR(HV_KEY(0), HV_KEY(0));
+    hassh_v x = hassh_lv(s, (size_t)len);
+    HASSH_UNROLL for (int j = 0; j < 2; j++) {
+        HASSH_LM_VARS(hassh_v, v);
+        HASSH_LM_LOAD(v, HV_LD, A, j);
+        HASSH_UNROLL for (int b = 0; b < 4; b++) HASSH_LM_STEP(v, z, z, z, z, HV_ENC, HV_XOR);
+        const hassh_v w[9] = { v0, v1, v2, v3, v4, v5, v6, v7, v8 };
+        HASSH_UNROLL for (int i = 0; i < 9; i++) {
+            hassh_v y = HV_XOR(w[i], HV_LKEY(18 + 9 * j + i));
+            HASSH_UNROLL for (int r = 0; r < 4; r++) y = HV_ENC(y, HV_KEY(16 + r));
+            x = HV_XOR(x, y);
+        }
+    }
+    return hassh_out(x);
+}
+#undef HASSH_HV_ST
+#endif
+
+HASSH_INLINE void hassh_lm_absorb(uint8_t *A, const uint8_t *q, size_t n) {
+#if defined(HASSH_DISPATCH)
+    if (hassh_cpu_aes()) hassh_lm_absorb_v(A, q, n); else hassh_lm_absorb_p(A, q, n);
+#elif defined(HASSH_VAES)
+    /* The asm reads RR from the previous step's address + 64. */
+    uint8_t pb[128];
+    const uint8_t *prev = pb;
+    HASSH_MEMCPY(pb + 64, A + 384, 32);
+    hassh_lm_steps2(A, q, n, &prev);
+    HASSH_MEMCPY(A + 384, prev + 64, 32);
+#elif defined(HASSH_SIMD)
+    hassh_lm_absorb_v(A, q, n);
+#else
+    hassh_lm_absorb_p(A, q, n);
+#endif
+}
+HASSH_INLINE uint64_t hassh_lm_finish(const uint8_t *A, uint64_t s, uint64_t len) {
+#if defined(HASSH_DISPATCH)
+    return hassh_cpu_aes() ? hassh_lm_finish_v(A, s, len) : hassh_lm_finish_p(A, s, len);
+#elif defined(HASSH_SIMD)
+    return hassh_lm_finish_v(A, s, len);
+#else
+    return hassh_lm_finish_p(A, s, len);
+#endif
+}
+static inline void hassh_lm_begin(hassh64_state *st) {
+#if defined(HASSH_DISPATCH)
+    if (hassh_cpu_aes()) hassh_lstarts(st->A, st->s); else hassh_lstarts_p(st->A, st->s);
+#elif defined(HASSH_SIMD)
+    hassh_lstarts(st->A, st->s);
+#else
+    hassh_lstarts_p(st->A, st->s);
+#endif
+    HASSH_MEMSET(st->A + 9 * 32, 0, 4 * 32);
+    st->lemac = 1;
+}
+
+static inline void hassh64_init(hassh64_state *st, uint64_t seed) {
+    st->seed = seed;
+    st->s = hassh_seed_s(seed);
+    st->total = 0;
+    st->pending = 0;
+    st->lemac = 0;
+}
+
+static inline void hassh64_update(hassh64_state *st, const void *data, size_t n) {
+    const uint8_t *p = (const uint8_t *)data;
+    st->total += n;
+    while (n) {
+        if (st->pending == HASSH_ST_BUF ||
+            (st->lemac && st->pending && st->pending % 128 == 0 && n > 128)) {
+            /* more input follows, so every buffered whole step is non-final */
+            if (!st->lemac) hassh_lm_begin(st);
+            hassh_lm_absorb(st->A, st->buf, st->pending / 128);
+            HASSH_MEMCPY(st->prev, st->buf + st->pending - 128, 128);
+            st->pending = 0;
+        }
+        if (st->pending == 0 && n > 128 && (st->lemac || n > HASSH_ST_BUF)) {
+            /* absorb straight from the input, keeping 1..128 bytes back */
+            size_t k = (n - 1) / 128;
+            if (!st->lemac) hassh_lm_begin(st);
+            hassh_lm_absorb(st->A, p, k);
+            HASSH_MEMCPY(st->prev, p + 128 * k - 128, 128);
+            p += 128 * k;
+            n -= 128 * k;
+        }
+        size_t t = HASSH_ST_BUF - st->pending;
+        /* a large update completes the partial step only, then goes direct */
+        if (st->lemac && st->pending % 128 && n > 256 - st->pending % 128) t = 128 - st->pending % 128;
+        if (t > n) t = n;
+        HASSH_MEMCPY(st->buf + st->pending, p, t);
+        st->pending += (uint32_t)t;
+        p += t;
+        n -= t;
+    }
+}
+
+static inline uint64_t hassh64_digest(const hassh64_state *st) {
+    if (!st->lemac) return hassh64(st->buf, (size_t)st->total, st->seed);
+    uint8_t A[13 * 32], last[128];
+    const uint32_t pn = st->pending;   /* 1..HASSH_ST_BUF */
+    HASSH_MEMCPY(A, st->A, sizeof A);
+    if (pn > 128) hassh_lm_absorb(A, st->buf, (pn - 1) / 128);
+    if (pn >= 128) {
+        HASSH_MEMCPY(last, st->buf + pn - 128, 128);
+    } else {
+        HASSH_MEMCPY(last, st->prev + pn, 128 - pn);
+        HASSH_MEMCPY(last + 128 - pn, st->buf, pn);
+    }
+    hassh_lm_absorb(A, last, 1);   /* the final step, aligned to the end */
+    return hassh_lm_finish(A, st->s, st->total);
+}
+#undef HASSH_LM_LOAD
+#undef HASSH_LM_STORE
+
 /* Internal macros stay internal. HASSH_P, HASSH_K and the hassh_* helpers
  * remain visible (the test suite uses them); no configuration macro does. */
 #undef HASSH_INLINE
@@ -1152,6 +1363,7 @@ HASSH_INLINE uint64_t hassh64_keyed(const hassh64_key *k, const void *data, size
 #undef HASSH_LM_START
 #undef HASSH_LM_G
 #undef HASSH_LM_TILE
+#undef HASSH_ST_BUF
 #undef HASSH_TGT
 #undef HASSH_SIMD_INLINE
 #undef HASSH_SIMD_ENTRY

@@ -115,6 +115,86 @@ macro_rules! simd_core {
             out(x)
         }
 
+        /// Streaming: the 18 LeMac start words into `a` (layout in `stream.rs`),
+        /// R0, R1, R1 ^ R2 and RR zeroed.
+        ///
+        /// # Safety
+        /// The CPU must support the target features above.
+        $(#[$tf])*
+        #[inline]
+        pub(crate) unsafe fn lm_begin(a: &mut [u8; 416], s: u64) {
+            let (lo, hi) = seed_vec(s);
+            let sv = set(lo, hi);
+            for j in 0..2 {
+                for i in 0..9 {
+                    let w = enc(enc(xor(lkey(9 * j + i), sv), key(INIT_KEY0)), key(INIT_KEY1));
+                    st(a.as_mut_ptr().add(32 * i + 16 * j), w);
+                }
+            }
+            for b in a[288..].iter_mut() {
+                *b = 0;
+            }
+        }
+
+        /// Streaming: `n` LeMac steps from `q` (128 bytes each) on the state `a`.
+        ///
+        /// # Safety
+        /// The CPU must support the target features above; `q` has `128 * n` bytes.
+        $(#[$tf])*
+        #[inline]
+        pub(crate) unsafe fn lm_absorb(a: &mut [u8; 416], q: *const u8, n: usize) {
+            for j in 0..2 {
+                let b = a.as_mut_ptr().add(16 * j);
+                let mut s = [ld(b); 9];
+                for (i, w) in s.iter_mut().enumerate() {
+                    *w = ld(b.add(32 * i));
+                }
+                let mut r = [ld(b.add(384)), ld(b.add(288)), ld(b.add(320)), ld(b.add(352))];
+                for k in 0..n {
+                    let m = q.add(128 * k + 16 * j);
+                    lm_step(&mut s, &mut r, ld(m), ld(m.add(32)), ld(m.add(64)), ld(m.add(96)));
+                }
+                for (i, w) in s.iter().enumerate() {
+                    st(b.add(32 * i), *w);
+                }
+                st(b.add(384), r[0]);
+                st(b.add(288), r[1]);
+                st(b.add(320), r[2]);
+                st(b.add(352), r[3]);
+            }
+        }
+
+        /// Streaming: blank steps, compression, length vector and finalizer.
+        ///
+        /// # Safety
+        /// The CPU must support the target features above.
+        $(#[$tf])*
+        #[inline]
+        pub(crate) unsafe fn lm_finish(a: &[u8; 416], s: u64, len: u64) -> u64 {
+            let (llo, lhi) = len_vec(s, len);
+            let mut x = enc(enc(set(llo, lhi), key(INIT_KEY0)), key(INIT_KEY1));
+            let z = xor(x, x);
+            for j in 0..2 {
+                let b = a.as_ptr().add(16 * j);
+                let mut w = [z; 9];
+                for (i, v) in w.iter_mut().enumerate() {
+                    *v = ld(b.add(32 * i));
+                }
+                let mut r = [ld(b.add(384)), ld(b.add(288)), ld(b.add(320)), ld(b.add(352))];
+                for _ in 0..4 {
+                    lm_step(&mut w, &mut r, z, z, z, z);
+                }
+                for (i, v) in w.iter().enumerate() {
+                    let mut y = xor(*v, lkey(18 + 9 * j + i));
+                    for rr in 0..4 {
+                        y = enc(y, key(ROUND_KEY0 + rr));
+                    }
+                    x = xor(x, y);
+                }
+            }
+            out(x)
+        }
+
         /// 65+ bytes.
         ///
         /// # Safety
@@ -224,6 +304,11 @@ pub(crate) mod x86 {
     }
     #[target_feature(enable = "aes,sse4.1")]
     #[inline]
+    unsafe fn st(p: *mut u8, x: V) {
+        _mm_storeu_si128(p as *mut V, x)
+    }
+    #[target_feature(enable = "aes,sse4.1")]
+    #[inline]
     unsafe fn fold(x: V) -> u64 {
         (_mm_cvtsi128_si64(x) as u64) ^ (_mm_extract_epi64(x, 1) as u64)
     }
@@ -276,6 +361,11 @@ pub(crate) mod arm {
     #[inline]
     unsafe fn set(lo: u64, hi: u64) -> V {
         vreinterpretq_u8_u64(vcombine_u64(vcreate_u64(lo), vcreate_u64(hi)))
+    }
+    #[target_feature(enable = "neon,aes")]
+    #[inline]
+    unsafe fn st(p: *mut u8, x: V) {
+        vst1q_u8(p, x)
     }
     #[target_feature(enable = "neon,aes")]
     #[inline]

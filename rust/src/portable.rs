@@ -221,3 +221,75 @@ pub(crate) fn large(p: &[u8], seed: u64) -> u64 {
     let lv = aesenc(&aesenc(&set(lvlo, lvhi), &key(INIT_KEY0)), &key(INIT_KEY1));
     out(xor(x, &lv))
 }
+
+/// Streaming: the 18 LeMac start words into `a` (layout in `stream.rs`).
+pub(crate) fn lm_begin(a: &mut [u8; 416], s: u64) {
+    let (svlo, svhi) = seed_vec(s);
+    let sv = set(svlo, svhi);
+    for j in 0..2 {
+        for i in 0..9 {
+            let w = aesenc(&aesenc(&xor(lkey(9 * j + i), &sv), &key(INIT_KEY0)), &key(INIT_KEY1));
+            st(a, 32 * i + 16 * j, &w);
+        }
+    }
+    for b in a[288..].iter_mut() {
+        *b = 0;
+    }
+}
+
+#[inline(always)]
+fn st(a: &mut [u8], off: usize, b: &Blk) {
+    a[off..off + 8].copy_from_slice(&b[0].to_le_bytes());
+    a[off + 8..off + 16].copy_from_slice(&b[1].to_le_bytes());
+}
+
+fn lm_load(a: &[u8; 416], j: usize) -> ([Blk; 9], [Blk; 4]) {
+    let mut s = [[0u64; 2]; 9];
+    for (i, w) in s.iter_mut().enumerate() {
+        *w = ld(a, 32 * i + 16 * j);
+    }
+    // The stored slot holds R1 ^ R2 (as the SIMD paths keep it); lm_step here keeps R2.
+    let b = 16 * j;
+    let r1 = ld(a, b + 320);
+    (s, [ld(a, b + 384), ld(a, b + 288), r1, xor(ld(a, b + 352), &r1)])
+}
+
+/// Streaming: `n` LeMac steps from `q` (at least `128 * n` bytes).
+pub(crate) fn lm_absorb(a: &mut [u8; 416], q: &[u8], n: usize) {
+    for j in 0..2 {
+        let (mut s, mut r) = lm_load(a, j);
+        for k in 0..n {
+            let m = 128 * k + 16 * j;
+            lm_step(&mut s, &mut r, [ld(q, m), ld(q, m + 32), ld(q, m + 64), ld(q, m + 96)]);
+        }
+        for (i, w) in s.iter().enumerate() {
+            st(a, 32 * i + 16 * j, w);
+        }
+        let b = 16 * j;
+        st(a, b + 384, &r[0]);
+        st(a, b + 288, &r[1]);
+        st(a, b + 320, &r[2]);
+        st(a, b + 352, &xor(r[2], &r[3]));
+    }
+}
+
+/// Streaming: blank steps, compression, length vector and finalizer.
+pub(crate) fn lm_finish(a: &[u8; 416], s: u64, len: u64) -> u64 {
+    let (lvlo, lvhi) = len_vec(s, len);
+    let mut x = aesenc(&aesenc(&set(lvlo, lvhi), &key(INIT_KEY0)), &key(INIT_KEY1));
+    let z: Blk = [0; 2];
+    for j in 0..2 {
+        let (mut w, mut r) = lm_load(a, j);
+        for _ in 0..4 {
+            lm_step(&mut w, &mut r, [z; 4]);
+        }
+        for (i, v) in w.iter().enumerate() {
+            let mut y = xor(*v, &lkey(18 + 9 * j + i));
+            for rr in 0..4 {
+                y = aesenc(&y, &key(ROUND_KEY0 + rr));
+            }
+            x = xor(x, &y);
+        }
+    }
+    out(x)
+}

@@ -30,7 +30,13 @@ test: | $(B)
 	$(CC) -O2 -march=native -mno-vaes -o $(B)/vec_sse test/vectors.c && $(B)/vec_sse
 	$(CC) -O2 -o $(B)/vec_dispatch test/vectors.c && $(B)/vec_dispatch
 	$(CC) -O2 -DHASSH_PORTABLE -o $(B)/vec_port test/vectors.c && $(B)/vec_port
+	$(CC) -O2 -march=native -Wall -Wextra -o $(B)/stream_vaes test/stream.c && $(B)/stream_vaes
+	$(CC) -O2 -march=native -mno-vaes -Wall -Wextra -o $(B)/stream_sse test/stream.c && $(B)/stream_sse
+	$(CC) -O2 -Wall -Wextra -o $(B)/stream_dispatch test/stream.c && $(B)/stream_dispatch
+	$(CC) -O2 -DHASSH_PORTABLE -Wall -Wextra -o $(B)/stream_port test/stream.c && $(B)/stream_port
+	$(CC) -O1 -g -fsanitize=address,undefined -march=native -o $(B)/stream_asan test/stream.c && $(B)/stream_asan
 	$(CC) -std=c99 -pedantic -Wall -Wextra -Werror -c -o /dev/null test/vectors.c
+	$(CC) -std=c99 -pedantic -Wall -Wextra -Werror -c -o /dev/null test/stream.c
 	$(CXX) -std=c++11 -pedantic -Wall -Wextra -Werror -x c++ -c -o /dev/null test/vectors.c
 
 # Other platforms via zig cross-compile + qemu user-mode (set QEMU_DIR to a
