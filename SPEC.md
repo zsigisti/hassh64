@@ -254,3 +254,7 @@ The output for every input is frozen for all 2.x releases. 2.x differs from 1.x 
 longer than 64 bytes: 3 rounds per block instead of 4, lane starts that depend on the seed alone,
 the length vector `lv`, and the LeMac absorber from 4096 bytes. Any change to any output, on any
 input, makes a new major version.
+
+This specification is final. No 3.0 is planned: implementations written against this document
+and its 548 vectors stay correct for every 2.x release. A new major version would only follow a
+published break of a documented property, and 2.x would remain available alongside it.

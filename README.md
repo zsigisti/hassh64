@@ -277,6 +277,13 @@ For SMHasher3, copy `smhasher3/hassh.cpp` into `deps/smhasher3/hashes/`, add it 
 
 ## Versioning
 
+**Stability promise: the 2.x output is final.** No 3.0 is planned. Speed work, new ports and new
+instruction-set paths ship as 2.x releases and never change a single output bit; `test/vectors.h`
+and the Rust crate's tests enforce that on every build. Only a published break of a documented
+property (a practical seed-independent collision attack or a failing SMHasher3 test) could lead
+to a 3.0, and even then 2.x would stay maintained and available, so hashes you store today keep
+their meaning.
+
 The output for every input is frozen for all 2.x releases, pinned by `test/vectors.h`. Any
 output change, on any input, means a new major version. `HASSH_VERSION_MAJOR` tells you which
 one you have. 2.x and 1.x agree for inputs of up to 64 bytes and differ above that; 1.x stays

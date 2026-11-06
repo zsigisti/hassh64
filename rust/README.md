@@ -2,7 +2,8 @@
 
 A fast, seeded, non-cryptographic 64-bit hash. Pure Rust, `#![no_std]`, no dependencies.
 Output is bit-identical to the C reference (`hassh.h`) and to [`SPEC.md`] on every platform,
-and frozen for all 2.x releases. 1.x outputs differ for inputs over 64 bytes (2.0 changed the
+and frozen for all 2.x releases. The 2.x output is final: no 3.0 is planned (see the
+[stability promise](https://github.com/zsigisti/hassh64#versioning)). 1.x outputs differ for inputs over 64 bytes (2.0 changed the
 AES section: 3 rounds per block, a separate length vector, and LeMac's absorber from 4096
 bytes); inputs of 0..64 bytes hash the same in 1.x and 2.x.
 

@@ -3,6 +3,12 @@
 All notable changes to this project are documented here. hassh64 follows
 [Semantic Versioning](https://semver.org/): any change to the hash output is a new major version.
 
+## [Unreleased]
+
+### Added
+- Stability promise (README, SPEC): the 2.x output is final and no 3.0 is planned. Future
+  releases change speed and platform support only, never output.
+
 ## [2.0.0] - 2026-11-06
 
 **Output changes for inputs longer than 64 bytes.** Inputs of up to 64 bytes hash exactly as in
