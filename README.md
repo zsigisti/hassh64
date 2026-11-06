@@ -112,20 +112,22 @@ Measured on an Intel Core Ultra 7 265KF (Arrow Lake), one P-core, Linux, GCC 16,
 **Quality:** SMHasher3 `--extra` (the test set behind SMHasher3's published results table):
 **252 / 252 pass.**
 
-**Speed:** SMHasher3 `--test=Speed`, pinned to one core. hassh64 2.0, 1.x and gxhash were
-measured on 2026-11-05, the other rows on 2026-11-04, same machine and build; repeat runs
-agree to within 1%.
+**Speed:** SMHasher3 `--test=Speed`, pinned to one core, every row measured on 2026-11-06 in
+one session on the same build. "2.0 lanes only" is 2.0 without the LeMac absorber, for comparison.
 
 | hash | SMHasher3 result | small keys 1–31 B (cycles/hash, lower is better) | bulk 256 KiB (bytes/cycle, higher is better) |
 |---|---|---:|---:|
-| **hassh64 2.0** | **pass** | **16.4** | **24.1** |
-| hassh64 1.x | pass | 16.4 | 18.7 |
+| **hassh64 2.0** | **pass** | **16.5** | **30.4** |
+| hassh64 2.0, lanes only | pass | 16.6 | 23.3 |
 | a5hash | pass | 18.1 | 3.0 |
-| MuseAir.bfast | pass | 18.7 | 10.4 |
+| MuseAir.bfast | pass | 18.7 | 10.5 |
 | rapidhash | pass | 28.1 | 13.1 |
 | MeowHash.64 | pass | 54.2 | 16.7 |
 | XXH3-64 | fails 27 tests | 28.1 | 19.7 |
-| gxhash-64 | fails 24 tests | 30.3 | 23.5 |
+| gxhash-64 | fails 24 tests | 30.7 | 22.9 |
+
+The bulk figure averages the 8 input alignments; 32-byte-aligned input reaches 35.9 bytes/cycle,
+unaligned about 29 (unaligned 32-byte loads that split a cache line cost the LeMac loop).
 
 Pass/fail for the other hashes is from SMHasher3's published results table.
 
@@ -140,9 +142,13 @@ every call; ns per hash, latency | throughput):
 | 128 | 11.64 \| 1.78 | 7.47 \| 4.38 | 8.41 \| 3.84 | 9.79 \| 3.89 | 9.49 \| 2.00 |
 | 256 | 13.65 \| 3.00 | 18.33 \| 9.83 | 12.08 \| 6.58 | 12.95 \| 7.04 | 12.63 \| 2.81 |
 | 512 | 16.93 \| 5.37 | 19.97 \| 11.01 | 19.87 \| 12.83 | 22.41 \| 14.88 | 14.59 \| 4.86 |
-| 256 KiB | 90 GB/s | 77 GB/s | 47 GB/s | 29 GB/s | 97 GB/s |
+| 256 KiB | 115 GB/s | 75 GB/s | 48 GB/s | 30 GB/s | 95 GB/s |
 
-Against 1.x: bulk +29%, and throughput for 128–512-byte keys about 40% better (128 B: 2.85 →
+At exactly 4096 bytes, where LeMac starts, its fixed finalization cost shows: 58 GB/s, against
+75 GB/s at 1 KiB and 109 GB/s at 16 KiB (the 256 KiB row was re-measured on 2026-11-06; the
+short-key rows are from 2026-11-05 and unchanged, since inputs under 4096 bytes did not change).
+
+Against 1.x: bulk +29% from the lanes alone, and throughput for 128–512-byte keys about 40% better (128 B: 2.85 →
 1.78 ns, 256 B: 5.21 → 3.00 ns). With a prepared seed (`hassh64_keyed`), 65–256-byte keys
 hashed back to back are 17–28% faster than 1.x.
 
@@ -165,7 +171,7 @@ hashed back to back are 17–28% faster than 1.x.
 ## When to use something else
 
 * **Untrusted keys on a server** (HashDoS): use SipHash or another keyed PRF.
-* **gxhash** is about as fast in bulk as hassh64 2.0 (23.5 vs 24.1 bytes/cycle here) and has
+* **gxhash** is slower in bulk than hassh64 2.0 here (22.9 vs 30.4 bytes/cycle) but has
   higher throughput on short keys, but it fails 24 SMHasher3
   tests. Those include real 64-bit collisions on long sparse keys (2048-byte keys with up to 2
   bits set) and on 4096-byte keys with a single non-zero byte. On all-zero keys, it gave 4,160
