@@ -3,7 +3,7 @@
 All notable changes to this project are documented here. hassh64 follows
 [Semantic Versioning](https://semver.org/): any change to the hash output is a new major version.
 
-## [2.0.0] - unreleased
+## [2.0.0] - 2026-11-06
 
 **Output changes for inputs longer than 64 bytes.** Inputs of up to 64 bytes hash exactly as in
 1.x. New test vectors in `test/vectors.h` (548, now up to 20000 bytes); `SPEC.md` describes 2.x.
@@ -35,7 +35,7 @@ All notable changes to this project are documented here. hassh64 follows
 - 2 AES rounds per block (68% faster in bulk): real 64-bit collisions in SMHasher3's Sparse test.
 - 2 final rounds instead of 3: passes 252/252, but saves only about 0.7 ns above 64 bytes.
 
-## [1.1.0] - unreleased
+## [1.1.0] - not released separately (included in 2.0.0)
 
 ### Added
 - Prepared-seed API: `hassh64_key_init` / `hassh64_keyed`, identical output to `hassh64()`.
