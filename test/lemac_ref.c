@@ -30,8 +30,8 @@ typedef struct { __m128i S[9]; } state;
 static uint64_t rng = 0x243f6a8885a308d3ull;
 static uint64_t next(void) { rng ^= rng << 13; rng ^= rng >> 7; rng ^= rng << 17; return rng; }
 static hassh_blk rb(void) { return hassh_set_p(next(), next()); }
-static __m128i tox(hassh_blk b) { return _mm_loadu_si128((const __m128i *)b.b); }
-static int eq(hassh_blk a, __m128i b) { uint8_t t[16]; _mm_storeu_si128((__m128i *)t, b); return !memcmp(a.b, t, 16); }
+static __m128i tox(hassh_blk b) { uint8_t t[16]; hassh_st_p(t, b); return _mm_loadu_si128((const __m128i *)t); }
+static int eq(hassh_blk a, __m128i b) { uint8_t t[16]; _mm_storeu_si128((__m128i *)t, b); uint8_t u[16]; hassh_st_p(u, a); return !memcmp(u, t, 16); }
 
 int __attribute__((target("aes,sse4.1"))) main(void) {
     long bad = 0;

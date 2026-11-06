@@ -35,7 +35,7 @@ static void build(uint8_t *A, size_t L1, const uint8_t *B, size_t L2) {
     if (L1 > 256) memcpy(A + 256, B + L2 - 256, 256);   /* last stripe identical */
     for (int i = 0; i < lanes; i++) {
         hassh_blk a = hassh_x_p(hassh_ld_p(B + first_off(i, L2)), D(i, L1, L2));
-        memcpy(A + first_off(i, L1), a.b, 16);
+        hassh_st_p(A + first_off(i, L1), a);
     }
 }
 
@@ -75,7 +75,7 @@ int main(void) {
             memset(M[k], 0xAB, sizeof M[k]);
             for (int i = 0; i < 16; i++) {
                 hassh_blk b = hassh_x_p(hassh_ld_p(S + 16 * i), start(i, 0, L));
-                memcpy(M[k] + 16 * i, b.b, 16);
+                hassh_st_p(M[k] + 16 * i, b);
             }
         }
         int bad = 0;
@@ -95,7 +95,7 @@ int main(void) {
         memcpy(B, A, 128);
         hassh_blk d = hassh_x_p(start(0, 0, 128), start(4, 0, 128));
         hassh_blk b0 = hassh_x_p(hassh_ld_p(A + 64), d), b4 = hassh_x_p(hassh_ld_p(A), d);
-        memcpy(B, b0.b, 16); memcpy(B + 64, b4.b, 16);   /* 128 B: lane 4 reads e-64 = 64 */
+        hassh_st_p(B, b0); hassh_st_p(B + 64, b4);   /* 128 B: lane 4 reads e-64 = 64 */
         int eq = 0;
         for (int k = 0; k < N; k++) { uint64_t seed = rnd() | 1; eq += hassh64(A, 128, seed) == hassh64(B, 128, seed); }
         report("lane swap 0<->4, start diff guessed at seed 0", eq, N);

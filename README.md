@@ -72,7 +72,7 @@ uint64_t h = hassh64_keyed(&k, data, len);  /* == hassh64(data, len, seed) */
 
 ```cmake
 include(FetchContent)
-FetchContent_Declare(hassh64 GIT_REPOSITORY https://github.com/zsigisti/hassh64 GIT_TAG v2.0.0)
+FetchContent_Declare(hassh64 GIT_REPOSITORY https://github.com/zsigisti/hassh64 GIT_TAG v2.1.0)
 FetchContent_MakeAvailable(hassh64)
 target_link_libraries(your_target PRIVATE hassh64::hassh64)
 ```

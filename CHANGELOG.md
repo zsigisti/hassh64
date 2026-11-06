@@ -3,11 +3,23 @@
 All notable changes to this project are documented here. hassh64 follows
 [Semantic Versioning](https://semver.org/): any change to the hash output is a new major version.
 
-## [Unreleased]
+## [2.1.0] - 2026-11-06
+
+No output change: all 548 vectors are identical.
 
 ### Added
 - Stability promise (README, SPEC): the 2.x output is final and no 3.0 is planned. Future
   releases change speed and platform support only, never output.
+
+### Changed
+- Portable (no AES instructions) path for inputs over 64 bytes: the software AES round is a
+  32-bit T-table round (one 1 KiB table) on blocks held as two 64-bit words, instead of a
+  byte-wise S-box with byte-wise MixColumns. C, built without SSE as a kernel would be:
+  128 bytes 953 -> 126 ns, 4096 bytes about 1.8 us (Arrow Lake, 1 core); with a prepared seed
+  (`hassh64_keyed`) it is faster than FNV-1a from 128 bytes up, and 2-8x faster at 4-64 bytes
+  as before. Rust `no_std` / no-AES builds: 3x faster (4096 bytes 5.6 -> 1.8 us).
+- Holding a block as four 32-bit words was 2.5x slower: the compiler read pairs of them back
+  with 64-bit loads, which stalls store forwarding.
 
 ## [2.0.0] - 2026-11-06
 

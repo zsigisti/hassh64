@@ -69,9 +69,9 @@
 #define HASSH_H
 
 #define HASSH_VERSION_MAJOR 2   /* bumped whenever any output changes */
-#define HASSH_VERSION_MINOR 0
+#define HASSH_VERSION_MINOR 1
 #define HASSH_VERSION_PATCH 0
-#define HASSH_VERSION "2.0.0"
+#define HASSH_VERSION "2.1.0"
 
 #include <stdint.h>
 #include <stddef.h>
@@ -437,62 +437,91 @@ HASSH_INLINE void hassh_lenvec_s(uint64_t s, size_t len, uint64_t *lo, uint64_t 
 /* ------------------------------------------------------- portable AES */
 #if !defined(HASSH_HAVE_SIMD) || defined(HASSH_DISPATCH) || defined(HASSH_WANT_PORTABLE)
 
-typedef struct { uint8_t b[16]; } hassh_blk;
+/* A block as two little-endian 64-bit halves: bytes 0..7 and 8..15. Column c
+ * (rows 0..3 = bytes 4c..4c+3) is 32 bits of half c / 2. Kept as 64-bit words
+ * so stores and loads of a block always have the same width (32-bit stores
+ * read back by 64-bit loads stall store forwarding, 2.5x slower). */
+typedef struct { uint64_t q[2]; } hassh_blk;
 
-static const uint8_t HASSH_SBOX[256] = {
-    0x63,0x7c,0x77,0x7b,0xf2,0x6b,0x6f,0xc5,0x30,0x01,0x67,0x2b,0xfe,0xd7,0xab,0x76,
-    0xca,0x82,0xc9,0x7d,0xfa,0x59,0x47,0xf0,0xad,0xd4,0xa2,0xaf,0x9c,0xa4,0x72,0xc0,
-    0xb7,0xfd,0x93,0x26,0x36,0x3f,0xf7,0xcc,0x34,0xa5,0xe5,0xf1,0x71,0xd8,0x31,0x15,
-    0x04,0xc7,0x23,0xc3,0x18,0x96,0x05,0x9a,0x07,0x12,0x80,0xe2,0xeb,0x27,0xb2,0x75,
-    0x09,0x83,0x2c,0x1a,0x1b,0x6e,0x5a,0xa0,0x52,0x3b,0xd6,0xb3,0x29,0xe3,0x2f,0x84,
-    0x53,0xd1,0x00,0xed,0x20,0xfc,0xb1,0x5b,0x6a,0xcb,0xbe,0x39,0x4a,0x4c,0x58,0xcf,
-    0xd0,0xef,0xaa,0xfb,0x43,0x4d,0x33,0x85,0x45,0xf9,0x02,0x7f,0x50,0x3c,0x9f,0xa8,
-    0x51,0xa3,0x40,0x8f,0x92,0x9d,0x38,0xf5,0xbc,0xb6,0xda,0x21,0x10,0xff,0xf3,0xd2,
-    0xcd,0x0c,0x13,0xec,0x5f,0x97,0x44,0x17,0xc4,0xa7,0x7e,0x3d,0x64,0x5d,0x19,0x73,
-    0x60,0x81,0x4f,0xdc,0x22,0x2a,0x90,0x88,0x46,0xee,0xb8,0x14,0xde,0x5e,0x0b,0xdb,
-    0xe0,0x32,0x3a,0x0a,0x49,0x06,0x24,0x5c,0xc2,0xd3,0xac,0x62,0x91,0x95,0xe4,0x79,
-    0xe7,0xc8,0x37,0x6d,0x8d,0xd5,0x4e,0xa9,0x6c,0x56,0xf4,0xea,0x65,0x7a,0xae,0x08,
-    0xba,0x78,0x25,0x2e,0x1c,0xa6,0xb4,0xc6,0xe8,0xdd,0x74,0x1f,0x4b,0xbd,0x8b,0x8a,
-    0x70,0x3e,0xb5,0x66,0x48,0x03,0xf6,0x0e,0x61,0x35,0x57,0xb9,0x86,0xc1,0x1d,0x9e,
-    0xe1,0xf8,0x98,0x11,0x69,0xd9,0x8e,0x94,0x9b,0x1e,0x87,0xe9,0xce,0x55,0x28,0xdf,
-    0x8c,0xa1,0x89,0x0d,0xbf,0xe6,0x42,0x68,0x41,0x99,0x2d,0x0f,0xb0,0x54,0xbb,0x16,
+/* AES round table: HASSH_TE[x] = MixColumns column (2,1,1,3)*S(x), row 0 in
+ * the low byte. Row r of the round uses it rotated left by 8r bits. One 1 KiB
+ * table (rather than four) keeps the cache footprint small for kernels. */
+static const uint32_t HASSH_TE[256] = {
+    0xa56363c6,0x847c7cf8,0x997777ee,0x8d7b7bf6,0x0df2f2ff,0xbd6b6bd6,
+    0xb16f6fde,0x54c5c591,0x50303060,0x03010102,0xa96767ce,0x7d2b2b56,
+    0x19fefee7,0x62d7d7b5,0xe6abab4d,0x9a7676ec,0x45caca8f,0x9d82821f,
+    0x40c9c989,0x877d7dfa,0x15fafaef,0xeb5959b2,0xc947478e,0x0bf0f0fb,
+    0xecadad41,0x67d4d4b3,0xfda2a25f,0xeaafaf45,0xbf9c9c23,0xf7a4a453,
+    0x967272e4,0x5bc0c09b,0xc2b7b775,0x1cfdfde1,0xae93933d,0x6a26264c,
+    0x5a36366c,0x413f3f7e,0x02f7f7f5,0x4fcccc83,0x5c343468,0xf4a5a551,
+    0x34e5e5d1,0x08f1f1f9,0x937171e2,0x73d8d8ab,0x53313162,0x3f15152a,
+    0x0c040408,0x52c7c795,0x65232346,0x5ec3c39d,0x28181830,0xa1969637,
+    0x0f05050a,0xb59a9a2f,0x0907070e,0x36121224,0x9b80801b,0x3de2e2df,
+    0x26ebebcd,0x6927274e,0xcdb2b27f,0x9f7575ea,0x1b090912,0x9e83831d,
+    0x742c2c58,0x2e1a1a34,0x2d1b1b36,0xb26e6edc,0xee5a5ab4,0xfba0a05b,
+    0xf65252a4,0x4d3b3b76,0x61d6d6b7,0xceb3b37d,0x7b292952,0x3ee3e3dd,
+    0x712f2f5e,0x97848413,0xf55353a6,0x68d1d1b9,0x00000000,0x2cededc1,
+    0x60202040,0x1ffcfce3,0xc8b1b179,0xed5b5bb6,0xbe6a6ad4,0x46cbcb8d,
+    0xd9bebe67,0x4b393972,0xde4a4a94,0xd44c4c98,0xe85858b0,0x4acfcf85,
+    0x6bd0d0bb,0x2aefefc5,0xe5aaaa4f,0x16fbfbed,0xc5434386,0xd74d4d9a,
+    0x55333366,0x94858511,0xcf45458a,0x10f9f9e9,0x06020204,0x817f7ffe,
+    0xf05050a0,0x443c3c78,0xba9f9f25,0xe3a8a84b,0xf35151a2,0xfea3a35d,
+    0xc0404080,0x8a8f8f05,0xad92923f,0xbc9d9d21,0x48383870,0x04f5f5f1,
+    0xdfbcbc63,0xc1b6b677,0x75dadaaf,0x63212142,0x30101020,0x1affffe5,
+    0x0ef3f3fd,0x6dd2d2bf,0x4ccdcd81,0x140c0c18,0x35131326,0x2fececc3,
+    0xe15f5fbe,0xa2979735,0xcc444488,0x3917172e,0x57c4c493,0xf2a7a755,
+    0x827e7efc,0x473d3d7a,0xac6464c8,0xe75d5dba,0x2b191932,0x957373e6,
+    0xa06060c0,0x98818119,0xd14f4f9e,0x7fdcdca3,0x66222244,0x7e2a2a54,
+    0xab90903b,0x8388880b,0xca46468c,0x29eeeec7,0xd3b8b86b,0x3c141428,
+    0x79dedea7,0xe25e5ebc,0x1d0b0b16,0x76dbdbad,0x3be0e0db,0x56323264,
+    0x4e3a3a74,0x1e0a0a14,0xdb494992,0x0a06060c,0x6c242448,0xe45c5cb8,
+    0x5dc2c29f,0x6ed3d3bd,0xefacac43,0xa66262c4,0xa8919139,0xa4959531,
+    0x37e4e4d3,0x8b7979f2,0x32e7e7d5,0x43c8c88b,0x5937376e,0xb76d6dda,
+    0x8c8d8d01,0x64d5d5b1,0xd24e4e9c,0xe0a9a949,0xb46c6cd8,0xfa5656ac,
+    0x07f4f4f3,0x25eaeacf,0xaf6565ca,0x8e7a7af4,0xe9aeae47,0x18080810,
+    0xd5baba6f,0x887878f0,0x6f25254a,0x722e2e5c,0x241c1c38,0xf1a6a657,
+    0xc7b4b473,0x51c6c697,0x23e8e8cb,0x7cdddda1,0x9c7474e8,0x211f1f3e,
+    0xdd4b4b96,0xdcbdbd61,0x868b8b0d,0x858a8a0f,0x907070e0,0x423e3e7c,
+    0xc4b5b571,0xaa6666cc,0xd8484890,0x05030306,0x01f6f6f7,0x120e0e1c,
+    0xa36161c2,0x5f35356a,0xf95757ae,0xd0b9b969,0x91868617,0x58c1c199,
+    0x271d1d3a,0xb99e9e27,0x38e1e1d9,0x13f8f8eb,0xb398982b,0x33111122,
+    0xbb6969d2,0x70d9d9a9,0x898e8e07,0xa7949433,0xb69b9b2d,0x221e1e3c,
+    0x92878715,0x20e9e9c9,0x49cece87,0xff5555aa,0x78282850,0x7adfdfa5,
+    0x8f8c8c03,0xf8a1a159,0x80898909,0x170d0d1a,0xdabfbf65,0x31e6e6d7,
+    0xc6424284,0xb86868d0,0xc3414182,0xb0999929,0x772d2d5a,0x110f0f1e,
+    0xcbb0b07b,0xfc5454a8,0xd6bbbb6d,0x3a16162c,
 };
 
-HASSH_INLINE uint8_t hassh_xt(uint8_t x) { return (uint8_t)((x << 1) ^ ((x >> 7) * 0x1b)); }
+HASSH_INLINE uint32_t hassh_rol32(uint32_t x, int r) { return (x << r) | (x >> (32 - r)); }
 
-/* One AES encryption round: MixColumns(ShiftRows(SubBytes(s))) ^ k. */
+/* One AES encryption round: MixColumns(ShiftRows(SubBytes(s))) ^ k, the same
+ * function as AESENC. Output column c takes row r from input column c + r. */
 HASSH_INLINE hassh_blk hassh_aesenc_p(hassh_blk s, hassh_blk k) {
-    uint8_t t[16];
-    for (int c = 0; c < 4; c++)
-        for (int r = 0; r < 4; r++)
-            t[4 * c + r] = HASSH_SBOX[s.b[4 * ((c + r) & 3) + r]];
-    hassh_blk o = {{0}};
-    for (int c = 0; c < 4; c++) {
-        uint8_t a0 = t[4*c], a1 = t[4*c+1], a2 = t[4*c+2], a3 = t[4*c+3];
-        uint8_t all = a0 ^ a1 ^ a2 ^ a3;
-        o.b[4*c+0] = a0 ^ all ^ hassh_xt(a0 ^ a1) ^ k.b[4*c+0];
-        o.b[4*c+1] = a1 ^ all ^ hassh_xt(a1 ^ a2) ^ k.b[4*c+1];
-        o.b[4*c+2] = a2 ^ all ^ hassh_xt(a2 ^ a3) ^ k.b[4*c+2];
-        o.b[4*c+3] = a3 ^ all ^ hassh_xt(a3 ^ a0) ^ k.b[4*c+3];
-    }
+    const uint32_t a = (uint32_t)s.q[0], b = (uint32_t)(s.q[0] >> 32);
+    const uint32_t c = (uint32_t)s.q[1], d = (uint32_t)(s.q[1] >> 32);
+#define HASSH_TE_COL(w0, w1, w2, w3)                                              \
+    (HASSH_TE[(w0) & 0xff] ^ hassh_rol32(HASSH_TE[((w1) >> 8) & 0xff], 8) ^        \
+     hassh_rol32(HASSH_TE[((w2) >> 16) & 0xff], 16) ^ hassh_rol32(HASSH_TE[(w3) >> 24], 24))
+    hassh_blk o;
+    o.q[0] = ((uint64_t)HASSH_TE_COL(a, b, c, d) | (uint64_t)HASSH_TE_COL(b, c, d, a) << 32) ^ k.q[0];
+    o.q[1] = ((uint64_t)HASSH_TE_COL(c, d, a, b) | (uint64_t)HASSH_TE_COL(d, a, b, c) << 32) ^ k.q[1];
+#undef HASSH_TE_COL
     return o;
 }
-HASSH_INLINE hassh_blk hassh_ld_p(const uint8_t *p) { hassh_blk b = {{0}}; memcpy(b.b, p, 16); return b; }
+HASSH_INLINE hassh_blk hassh_ld_p(const uint8_t *p) {
+    hassh_blk b; b.q[0] = hassh_r64(p); b.q[1] = hassh_r64(p + 8); return b;
+}
+HASSH_INLINE void hassh_st_p(uint8_t *p, hassh_blk b) {
+    for (int i = 0; i < 8; i++) { p[i] = (uint8_t)(b.q[0] >> (8*i)); p[8+i] = (uint8_t)(b.q[1] >> (8*i)); }
+}
 HASSH_INLINE hassh_blk hassh_x_p(hassh_blk a, hassh_blk b) {
-    for (int i = 0; i < 16; i++) a.b[i] ^= b.b[i];
-    return a;
+    a.q[0] ^= b.q[0]; a.q[1] ^= b.q[1]; return a;
 }
 HASSH_INLINE hassh_blk hassh_set_p(uint64_t lo, uint64_t hi) {
-    hassh_blk b = {{0}};
-    for (int i = 0; i < 8; i++) { b.b[i] = (uint8_t)(lo >> (8*i)); b.b[8+i] = (uint8_t)(hi >> (8*i)); }
-    return b;
+    hassh_blk b; b.q[0] = lo; b.q[1] = hi; return b;
 }
 HASSH_INLINE hassh_blk hassh_key_p(int i) { return hassh_set_p(HASSH_K[2*i], HASSH_K[2*i+1]); }
-HASSH_INLINE uint64_t hassh_out_p(hassh_blk x) {
-    uint64_t lo = 0, hi = 0;
-    for (int i = 0; i < 8; i++) { lo |= (uint64_t)x.b[i] << (8*i); hi |= (uint64_t)x.b[8+i] << (8*i); }
-    return lo ^ hi;
-}
+HASSH_INLINE uint64_t hassh_out_p(hassh_blk x) { return x.q[0] ^ x.q[1]; }
 
 
 /* Reference implementation for len > 16 (the specification the SIMD paths
@@ -532,7 +561,7 @@ HASSH_INLINE hassh_blk hassh_sv_p(uint64_t seed) { return hassh_sv_ps(hassh_seed
 /* The 16 lane starts (256 bytes) for s. */
 static inline void hassh_starts_p(uint8_t *out, uint64_t s) {
     hassh_blk sv = hassh_sv_ps(s);
-    for (int i = 0; i < 16; i++) memcpy(out + 16 * i, hassh_init_p(i, sv).b, 16);
+    for (int i = 0; i < 16; i++) hassh_st_p(out + 16 * i, hassh_init_p(i, sv));
 }
 /* st: the precomputed lane starts, or NULL to compute them here. */
 static inline uint64_t hassh_large_portable_s(const uint8_t *p, size_t len, uint64_t s,
@@ -550,15 +579,23 @@ static inline uint64_t hassh_large_portable_s(const uint8_t *p, size_t len, uint
         int half = lanes / 2;
         for (int i = 0; i < lanes; i++) {
             const uint8_t *src = i < half ? p + 16 * i : p + len - 16 * (lanes - i);
-            acc[i] = hassh_perm_p(hassh_x_p(acc[i], hassh_ld_p(src)));
+            acc[i] = hassh_x_p(acc[i], hassh_ld_p(src));
+        }
+        /* round-major, so the independent lanes overlap */
+        for (int r = 0; r < HASSH_ROUNDS; r++) {
+            const hassh_blk k = hassh_key_p(16 + r);
+            for (int i = 0; i < lanes; i++) acc[i] = hassh_aesenc_p(acc[i], k);
         }
     } else {
         /* 256-byte stripes, the final stripe aligned to the end of the input */
         size_t off = 0;
         for (;;) {
             if (off + 256 > len) off = len - 256;
-            for (int i = 0; i < 16; i++)
-                acc[i] = hassh_perm_p(hassh_x_p(acc[i], hassh_ld_p(p + off + 16 * i)));
+            for (int i = 0; i < 16; i++) acc[i] = hassh_x_p(acc[i], hassh_ld_p(p + off + 16 * i));
+            for (int r = 0; r < HASSH_ROUNDS; r++) {
+                const hassh_blk k = hassh_key_p(16 + r);
+                for (int i = 0; i < 16; i++) acc[i] = hassh_aesenc_p(acc[i], k);
+            }
             if (off + 256 >= len) break;
             off += 256;
         }
@@ -599,9 +636,9 @@ static inline void hassh_lstarts_p(uint8_t *out, uint64_t s) {
     hassh_blk sv = hassh_sv_ps(s);
     for (int j = 0; j < 2; j++)
         for (int i = 0; i < 9; i++)
-            memcpy(out + 16 * (2 * i + j),
-                   hassh_aesenc_p(hassh_aesenc_p(hassh_x_p(hassh_lkey_p(9 * j + i), sv), hassh_key_p(HASSH_INIT_KEY0)),
-                                  hassh_key_p(HASSH_INIT_KEY1)).b, 16);
+            hassh_st_p(out + 16 * (2 * i + j),
+                       hassh_aesenc_p(hassh_aesenc_p(hassh_x_p(hassh_lkey_p(9 * j + i), sv), hassh_key_p(HASSH_INIT_KEY0)),
+                                      hassh_key_p(HASSH_INIT_KEY1)));
 }
 HASSH_INLINE hassh_blk hassh_lm_comp_p(int w, hassh_blk x) {
     x = hassh_x_p(x, hassh_lkey_p(18 + w));
@@ -611,7 +648,7 @@ HASSH_INLINE hassh_blk hassh_lm_comp_p(int w, hassh_blk x) {
 /* ls: the precomputed start words (hassh_lstarts_p layout), or NULL. */
 static inline uint64_t hassh_long_portable_s(const uint8_t *p, size_t len, uint64_t s, const uint8_t *ls) {
     typedef hassh_blk hassh_lm_t;
-    hassh_blk z = {{0}}, x = z, w[9];
+    hassh_blk z = {{0, 0}}, x = z, w[9];
     HASSH_LM_VARS(hassh_blk, v);
     uint8_t st[16 * 18];
     if (!ls) { hassh_lstarts_p(st, s); ls = st; }

@@ -169,6 +169,17 @@ pub mod __private {
 
     /// One software AES round (for the FIPS-197 / Intel AESENC example test).
     pub fn aesenc_portable(x: &[u8; 16], k: &[u8; 16]) -> [u8; 16] {
-        crate::portable::aesenc(x, k)
+        let blk = |b: &[u8; 16]| {
+            let mut lo = [0u8; 8];
+            let mut hi = [0u8; 8];
+            lo.copy_from_slice(&b[..8]);
+            hi.copy_from_slice(&b[8..]);
+            [u64::from_le_bytes(lo), u64::from_le_bytes(hi)]
+        };
+        let o = crate::portable::aesenc(&blk(x), &blk(k));
+        let mut r = [0u8; 16];
+        r[..8].copy_from_slice(&o[0].to_le_bytes());
+        r[8..].copy_from_slice(&o[1].to_le_bytes());
+        r
     }
 }
