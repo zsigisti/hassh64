@@ -79,6 +79,9 @@ target_link_libraries(your_target PRIVATE hassh64::hassh64)
 
 `cmake --install` also installs the header and a `find_package(hassh64)` config.
 
+**Rust.** `cargo add hassh64` ([crates.io](https://crates.io/crates/hassh64)): a native port with the same
+output, `no_std`, with a `HashMap` hasher. See [`rust/README.md`](rust/README.md).
+
 **Other languages.** [`SPEC.md`](SPEC.md) defines the algorithm completely, and
 [`test/vectors.h`](test/vectors.h) has 548 known answers. A port is correct when it reproduces
 all of them. [`ports/python/hassh64.py`](ports/python/hassh64.py) is a slow pure-Python

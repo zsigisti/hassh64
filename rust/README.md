@@ -6,6 +6,10 @@ and frozen for all 2.x releases. 1.x outputs differ for inputs over 64 bytes (2.
 AES section: 3 rounds per block, a separate length vector, and LeMac's absorber from 4096
 bytes); inputs of 0..64 bytes hash the same in 1.x and 2.x.
 
+```
+cargo add hassh64
+```
+
 > **AI-generated.** The hash design, this crate, its tests and its benchmarks were written by
 > an AI (Anthropic's Claude, via Claude Code) under human direction, and reviewed only by AI
 > agents. Nothing here has been checked by an independent human expert.
