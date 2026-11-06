@@ -7,8 +7,9 @@ set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 tmp=$(mktemp -d)
 trap 'pg_ctl -D "$tmp/db" -m immediate stop >/dev/null 2>&1 || true; rm -rf "$tmp"' EXIT
-make -s -C "$here" >/dev/null
-make -s -C "$here" install DESTDIR="$tmp/stage" >/dev/null
+# with_llvm=no: skip the optional JIT bitcode (llvm-lto crashes in some images).
+make -s -C "$here" with_llvm=no >/dev/null
+make -s -C "$here" with_llvm=no install DESTDIR="$tmp/stage" >/dev/null
 share=$tmp/stage$(pg_config --sharedir)
 lib=$tmp/stage$(pg_config --pkglibdir)
 initdb -A trust -U postgres -D "$tmp/db" >/dev/null

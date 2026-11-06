@@ -59,19 +59,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: sudo apt-get update && sudo apt-get install -y clang llvm sqlite3 libsqlite3-dev postgresql-server-dev-all
+      - run: sudo apt-get update && sudo apt-get install -y sqlite3 libsqlite3-dev
       - run: make -C integrations/kernel check
       - run: make -C integrations/cpp test
       - run: make -C integrations/cpp test CXX=clang++
       - run: make -C integrations/sqlite test
-      # The runner's PostgreSQL (16) predates extension_control_path, so install
-      # the extension and run the regression test through pg_regress instead.
+      # PostgreSQL 18 in its official image: the same throwaway-cluster check as locally.
       - run: |
-          sudo systemctl start postgresql
-          make -C integrations/postgres
-          sudo make -C integrations/postgres install
-          sudo -u postgres createuser -s "$USER"
-          make -C integrations/postgres installcheck PGHOST=localhost || { cat integrations/postgres/regression.diffs; exit 1; }
+          docker run --rm --tmpfs /tmp:exec,size=2g -v "$PWD:/src:ro" postgres:18 bash -ec '
+            apt-get update -qq && apt-get install -y -qq build-essential postgresql-server-dev-18 >/dev/null 2>&1
+            mkdir -p /tmp/hassh && cp -r /src/integrations /src/hassh.h /tmp/hassh/ && chown -R postgres /tmp/hassh
+            su postgres -c "/tmp/hassh/integrations/postgres/check.sh"'
       - run: rustup target add x86_64-unknown-none
       - run: cargo build --release --target x86_64-unknown-none --no-default-features
         working-directory: rust
