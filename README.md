@@ -222,7 +222,7 @@ cryptographer has analysed it.
 3-round differential an AI reviewer found gives fixed pairs of inputs of 65–4095 bytes that
 collide for about 2^-51 of seeds, against the ideal 2^-64. That is still far too rare to
 exploit (an attacker would need around 2^51 tries against one seed), but 1.x, with 4 rounds per
-block, had no such pairs. If that margin matters to you, stay on 1.x.
+block, had no such pairs. If that margin matters to you, stay on 1.x (the `v1` branch).
 
 **From 4096 bytes** hassh64 uses LeMac's step function, whose designers proved (by MILP, in a
 peer-reviewed paper that was later corrected once) that any differential trail to a collision of
@@ -306,8 +306,8 @@ their meaning.
 
 The output for every input is frozen for all 2.x releases, pinned by `test/vectors.h`. Any
 output change, on any input, means a new major version. `HASSH_VERSION_MAJOR` tells you which
-one you have. 2.x and 1.x agree for inputs of up to 64 bytes and differ above that; 1.x stays
-available on the `main` history and its [1.0.1 release](https://github.com/zsigisti/hassh64/releases/tag/v1.0.1).
+one you have. 2.x and 1.x agree for inputs of up to 64 bytes and differ above that; 1.x lives on
+the [`v1` branch](https://github.com/zsigisti/hassh64/tree/v1) (its [1.0.1 release](https://github.com/zsigisti/hassh64/releases/tag/v1.0.1)); `main` is 2.x.
 
 ## License
 
