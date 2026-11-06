@@ -1,4 +1,4 @@
-//! Known-answer tests: all 532 frozen vectors from test/vectors.h (copied into
+//! Known-answer tests: all 548 frozen vectors from test/vectors.h (copied into
 //! this crate so the published package is self-contained), on every path.
 
 use core::hash::Hasher;
@@ -34,7 +34,7 @@ fn message(n: usize) -> Vec<u8> {
 
 fn check(name: &str, f: impl Fn(&[u8], u64) -> u64) -> usize {
     let vecs = vectors();
-    assert_eq!(vecs.len(), 532, "vector file parse");
+    assert_eq!(vecs.len(), 548, "vector file parse");
     let msg = message(vecs.iter().map(|v| v.0).max().unwrap());
     let mut bad = Vec::new();
     for &(len, seed, want) in &vecs {

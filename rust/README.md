@@ -3,8 +3,8 @@
 A fast, seeded, non-cryptographic 64-bit hash. Pure Rust, `#![no_std]`, no dependencies.
 Output is bit-identical to the C reference (`hassh.h`) and to [`SPEC.md`] on every platform,
 and frozen for all 2.x releases. 1.x outputs differ for inputs over 64 bytes (2.0 changed the
-AES section: 3 rounds per block and a separate length vector); inputs of 0..64 bytes hash the
-same in 1.x and 2.x.
+AES section: 3 rounds per block, a separate length vector, and LeMac's absorber from 4096
+bytes); inputs of 0..64 bytes hash the same in 1.x and 2.x.
 
 > **AI-generated.** The hash design, this crate, its tests and its benchmarks were written by
 > an AI (Anthropic's Claude, via Claude Code) under human direction, and reviewed only by AI
@@ -61,7 +61,9 @@ that seed. The seed keys are derived once per `BuildHasher`, not once per key.
 | 65+ bytes, aarch64 | ARMv8 AES: compiled in with the `aes` target feature (default on Apple), otherwise detected at run time with `std` |
 | otherwise | portable software AES round (same output, slower) |
 
-The C header's 256-bit VAES path is not ported; it changes speed, not output.
+The C header's 256-bit VAES paths (lanes and the LeMac inline-assembly loop) are not ported;
+they change speed, not output. The 4096+ byte LeMac absorber runs on 128-bit AES instructions
+here, one state after the other.
 
 ## Benchmarks
 
@@ -116,7 +118,7 @@ MSRV: Rust 1.72 (aarch64 AES intrinsics).
 
 ## Testing
 
-`cargo test` checks all 532 frozen vectors from the C repository's `test/vectors.h` (copied
+`cargo test` checks all 548 frozen vectors from the C repository's `test/vectors.h` (copied
 into `tests/`) on the default path, the forced portable path and the hardware path, at
 aligned and unaligned addresses. `cargo bench` compares against rapidhash, foldhash and
 ahash.

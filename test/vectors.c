@@ -1,5 +1,5 @@
 /* Known-answer test: hassh64 must reproduce test/vectors.h exactly, on every
- * ISA path and platform. These vectors freeze the 1.x output. */
+ * ISA path and platform. These vectors freeze the 2.x output. */
 #include <stdio.h>
 #include <stdint.h>
 #ifndef HASSH_HEADER
@@ -9,7 +9,7 @@
 #include "vectors.h"
 
 int main(void) {
-    static uint8_t m[4096];
+    static uint8_t m[20000];
     for (size_t i = 0; i < sizeof m; i++) m[i] = (uint8_t)(i * 31 + 7);
     size_t n = sizeof HASSH_VECTORS / sizeof HASSH_VECTORS[0], bad = 0;
     for (size_t i = 0; i < n; i++) {

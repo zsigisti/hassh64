@@ -17,6 +17,8 @@ test: | $(B)
 	 echo "vaes: $$a" && echo "sse:  $$b" && echo "port: $$c" && \
 	 [ "$$a" = "$$b" ] && [ "$$b" = "$$c" ] && echo "cross-check OK"
 	$(B)/bounds && $(B)/bounds_port
+	$(CC) -O2 -Wall -Wextra -o $(B)/lemac_ref test/lemac_ref.c && $(B)/lemac_ref
+	$(CC) -O2 -march=native -Wall -Wextra -o $(B)/longstats test/longstats.c -lm && $(B)/longstats --quick | tail -1
 	$(CC) -O2 -march=native -Wall -Wextra -o $(B)/seed_vaes test/seedindep.c
 	$(CC) -O2 -march=native -mno-vaes -Wall -Wextra -o $(B)/seed_sse test/seedindep.c
 	$(CC) -O2 -DHASSH_PORTABLE -Wall -Wextra -o $(B)/seed_port test/seedindep.c

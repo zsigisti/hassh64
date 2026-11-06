@@ -1,4 +1,5 @@
-//! Nothing-up-my-sleeve constants: the SHA-512 IV and the first 64 SHA-512 round constants.
+//! Nothing-up-my-sleeve constants: the SHA-512 IV, the first 64 SHA-512 round
+//! constants, and their continuation (cube roots of the 81st..152nd primes).
 
 pub(crate) const P: [u64; 8] = [
     0x6a09e667f3bcc908, 0xbb67ae8584caa73b, 0x3c6ef372fe94f82b, 0xa54ff53a5f1d36f1,
@@ -33,3 +34,28 @@ pub(crate) const FIN_KEY0: usize = 24; // fin: keys 24..26
 pub(crate) const FIN_ROUNDS: usize = 3;
 pub(crate) const INIT_KEY0: usize = 30;
 pub(crate) const INIT_KEY1: usize = 31;
+
+/// Inputs of at least this many bytes use the LeMac absorber instead of the lanes.
+pub(crate) const LONG_MIN: usize = 4096;
+/// LeMac keys (lo, hi halves): 0..17 start the 18 state words, 18..35 key their
+/// compression. Fractional parts of the cube roots of the 81st..152nd primes.
+pub(crate) const L: [u64; 72] = [
+    0x7ba0ea2d98160007, 0x7eabf2d0c21f964a, 0x8dbe8d038b409545, 0x90bb1721582e8285,
+    0x99a2ad45936d4e61, 0x9f86e289fe03e739, 0xa84c4472faa9a82f, 0xb3df34fce89e0532,
+    0xb99bb8d7b173534f, 0xbc76cbab1aea1f9c, 0xc226a69a780f3cc3, 0xd304f19aa233957d,
+    0xde1be20a212129dd, 0xe39bb43755141950, 0xee84927cea48ddd2, 0xf3edd2773c523b67,
+    0xfbfdfe53a8d32f2a, 0x0bee2c7ab77e9e25, 0x0e90181cf1b09e56, 0x25f57204c725bed8,
+    0x2da45582cd598b32, 0x3a52c34c203bfcf3, 0x41dc0172cd1991c1, 0x495796fcb33cc1c0,
+    0x4bd31fc693f9f16e, 0x533cde2115f5a9a0, 0x5f7abfe36e99c1d3, 0x66c206b310a57e6f,
+    0x6dfcc6bc39603f61, 0x7062f20f86fd1052, 0x778d51277adec865, 0x7eaba3cc25da7048,
+    0x8363eccc37a5be05, 0x85be1c253beba54e, 0x93c04028f348bbc5, 0x9f4a205fd05b2148,
+    0xa19535651ca6d2de, 0xa627bb0fbf027bc7, 0xacfa80891da2f06b, 0xb3c29b23031a7f9d,
+    0xb602f6fac7d3d74d, 0xc36cee0a10c7ba49, 0xc7dc81eea9ebad4f, 0xce7b8471b0f809df,
+    0xd740288c84df269c, 0xe21dba7ac2290607, 0xeabbff66be175964, 0xf56a9e60f62cea92,
+    0xfde41d729d126eab, 0x0434d0970e42e781, 0x0a7cb752a3f1cd86, 0x0ea7d22d6bcd7382,
+    0x16f2987f9495a5ee, 0x1d20cdcd45b8de1e, 0x213af85a39b0c320, 0x2964505c52a2f35b,
+    0x2d738e114181e082, 0x3b8cea0e71c58aaf, 0x4584e6ae9f54016e, 0x515f4356903dccc2,
+    0x5356112ddfd5a8e9, 0x5d1bc3edbe2c897a, 0x5f0da9f8ed53548b, 0x62ef0be4d5492e78,
+    0x64de896eace0be7f, 0x6e801ba3078ae05f, 0x7bdb3595cdadf50a, 0x7fa5377856834c98,
+    0x818916bad3d008a8, 0x854e959f834021a7, 0x926a82c27137e2c6, 0x9622c7ba7d179197,
+];

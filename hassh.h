@@ -40,6 +40,11 @@
  *                collision resistance). Inputs <=256 bytes read the head and
  *                the tail with overlapping loads; longer ones use 256-byte
  *                stripes, the last aligned to the end.
+ *   len 4096..   AES: two LeMac states (ToSC 2024, corrected 2025): 2 AES
+ *                rounds per 16 bytes instead of 3, and a published bound of
+ *                >=26 active S-boxes for any trail to a state collision.
+ *                128-byte steps, the last aligned to the end; then 4 blank
+ *                steps, 4 rounds per state word, XOR with lv, 3 rounds.
  *
  * Seed handling. Every first-level multiply has both operands keyed by the
  * seed, with keys nonlinear in each other (s, and s2 = f(s, len)); later
@@ -51,11 +56,11 @@
  * has had AI review and no human cryptanalysis, so it makes NO claim of
  * HashDoS resistance.
  *
- * Known margin (2.x): with 3 rounds per block, the best 3-round AES
- * differential found (about 2^-51.2) gives fixed input pairs that collide for
- * about 2^-51 of seeds, against the ideal 2^-64. 1.x used 4 rounds (>=25
- * active S-boxes) and had no such pairs; 2.x trades that margin for about 29%
- * more bulk speed.
+ * Known margin (2.x, 65..4095 bytes): with 3 rounds per block, the best
+ * 3-round AES differential found (about 2^-51.2) gives fixed input pairs that
+ * collide for about 2^-51 of seeds, against the ideal 2^-64. 1.x used 4
+ * rounds (>=25 active S-boxes) and had no such pairs; 2.x trades that margin
+ * for speed. From 4096 bytes the LeMac absorber has no such known pairs.
  *
  * NOT a cryptographic hash and NOT a MAC. Do not use it for passwords,
  * signatures, or anything an attacker must not be able to forge.
@@ -119,6 +124,16 @@ extern "C" {
 #  define HASSH_INLINE static inline
 #  define HASSH_LIKELY(x) (x)
 #endif
+/* Fixed-count loops over vector registers must be fully unrolled, or the
+ * accumulators live in a stack array (GCC -O2 does not unroll them on its own:
+ * measured 15 instead of 23 bytes/cycle). */
+#if defined(__clang__)
+#  define HASSH_UNROLL _Pragma("unroll")
+#elif defined(__GNUC__) && __GNUC__ >= 8
+#  define HASSH_UNROLL _Pragma("GCC unroll 16")
+#else
+#  define HASSH_UNROLL
+#endif
 /* SIMD functions. When dispatching they carry a target attribute, so they
  * cannot be force-inlined into hassh64 (which has none); the two entry points
  * are then ordinary static functions. */
@@ -151,6 +166,17 @@ static const uint64_t HASSH_P[8] = {
 #ifndef HASSH_FIN_ROUNDS
 #  define HASSH_FIN_ROUNDS 3  /* rounds after the lane XOR, keys 24.. (max 6) */
 #endif
+/* Inputs of at least HASSH_LONG_MIN bytes use the LeMac absorber instead of
+ * the lanes (part of the algorithm, like the round counts). */
+#if defined(HASSH_LONG_MIN) && !defined(HASSH_EXPERIMENTAL)
+#  error "HASSH_LONG_MIN changes hassh64's output; define HASSH_EXPERIMENTAL to override it"
+#endif
+#ifndef HASSH_LONG_MIN
+#  define HASSH_LONG_MIN 4096
+#endif
+#if HASSH_LONG_MIN < 257
+#  error "HASSH_LONG_MIN must be at least 257"
+#endif
 #define HASSH_INIT_KEY0 30    /* lane-start round keys (two rounds) */
 #define HASSH_INIT_KEY1 31
 #if HASSH_ROUNDS < 1 || HASSH_ROUNDS > 8
@@ -181,6 +207,31 @@ static const uint64_t HASSH_K[] = {
 };
 /* Fails to compile if the table above is not exactly 64 entries. */
 typedef char hassh_k_size_check[(sizeof HASSH_K / sizeof HASSH_K[0] == 64) ? 1 : -1];
+/* Long-input keys (36 x 128 bits, as lo/hi halves): fractional parts of the
+ * cube roots of the 81st to 152nd primes (the sequence SHA-512's K continues
+ * with). Keys 0..17 start the 18 LeMac state words, 18..35 key their
+ * compression. */
+static const uint64_t HASSH_L[] = {
+    0x7ba0ea2d98160007ull, 0x7eabf2d0c21f964aull, 0x8dbe8d038b409545ull, 0x90bb1721582e8285ull,
+    0x99a2ad45936d4e61ull, 0x9f86e289fe03e739ull, 0xa84c4472faa9a82full, 0xb3df34fce89e0532ull,
+    0xb99bb8d7b173534full, 0xbc76cbab1aea1f9cull, 0xc226a69a780f3cc3ull, 0xd304f19aa233957dull,
+    0xde1be20a212129ddull, 0xe39bb43755141950ull, 0xee84927cea48ddd2ull, 0xf3edd2773c523b67ull,
+    0xfbfdfe53a8d32f2aull, 0x0bee2c7ab77e9e25ull, 0x0e90181cf1b09e56ull, 0x25f57204c725bed8ull,
+    0x2da45582cd598b32ull, 0x3a52c34c203bfcf3ull, 0x41dc0172cd1991c1ull, 0x495796fcb33cc1c0ull,
+    0x4bd31fc693f9f16eull, 0x533cde2115f5a9a0ull, 0x5f7abfe36e99c1d3ull, 0x66c206b310a57e6full,
+    0x6dfcc6bc39603f61ull, 0x7062f20f86fd1052ull, 0x778d51277adec865ull, 0x7eaba3cc25da7048ull,
+    0x8363eccc37a5be05ull, 0x85be1c253beba54eull, 0x93c04028f348bbc5ull, 0x9f4a205fd05b2148ull,
+    0xa19535651ca6d2deull, 0xa627bb0fbf027bc7ull, 0xacfa80891da2f06bull, 0xb3c29b23031a7f9dull,
+    0xb602f6fac7d3d74dull, 0xc36cee0a10c7ba49ull, 0xc7dc81eea9ebad4full, 0xce7b8471b0f809dfull,
+    0xd740288c84df269cull, 0xe21dba7ac2290607ull, 0xeabbff66be175964ull, 0xf56a9e60f62cea92ull,
+    0xfde41d729d126eabull, 0x0434d0970e42e781ull, 0x0a7cb752a3f1cd86ull, 0x0ea7d22d6bcd7382ull,
+    0x16f2987f9495a5eeull, 0x1d20cdcd45b8de1eull, 0x213af85a39b0c320ull, 0x2964505c52a2f35bull,
+    0x2d738e114181e082ull, 0x3b8cea0e71c58aafull, 0x4584e6ae9f54016eull, 0x515f4356903dccc2ull,
+    0x5356112ddfd5a8e9ull, 0x5d1bc3edbe2c897aull, 0x5f0da9f8ed53548bull, 0x62ef0be4d5492e78ull,
+    0x64de896eace0be7full, 0x6e801ba3078ae05full, 0x7bdb3595cdadf50aull, 0x7fa5377856834c98ull,
+    0x818916bad3d008a8ull, 0x854e959f834021a7ull, 0x926a82c27137e2c6ull, 0x9622c7ba7d179197ull,
+};
+typedef char hassh_l_size_check[(sizeof HASSH_L / sizeof HASSH_L[0] == 72) ? 1 : -1];
 
 /* ---------------------------------------------------------------- scalar */
 
@@ -369,6 +420,20 @@ HASSH_INLINE void hassh_lenvec_s(uint64_t s, size_t len, uint64_t *lo, uint64_t 
     *hi = hassh_fold(s ^ (uint64_t)len ^ HASSH_P[6], HASSH_P[7]);
 }
 
+/* One LeMac step (see hassh_long_portable_s) on the variables V0..V8 (state)
+ * and Vq, Vr0, Vr1 (LeMac's RR, R0, R1), with Vr2 = LeMac's R1 ^ R2 (the only
+ * way R2 is used). Named variables rather than arrays, so compilers keep the
+ * state in registers; the new S0 is computed first so the old S8 dies early. */
+#define HASSH_LM_STEP(V, M0, M1, M2, M3, ENC, XOR) do {                      \
+        const hassh_lm_t S0_ = XOR(XOR(V##0, V##8), M2);                     \
+        V##8 = ENC(V##7, M3); V##7 = ENC(V##6, M1); V##6 = ENC(V##5, M1);     \
+        V##5 = ENC(V##4, M0); V##4 = ENC(V##3, M0);                           \
+        V##3 = ENC(V##2, V##r2);                                              \
+        V##2 = ENC(V##1, M3); V##1 = ENC(V##0, M3); V##0 = S0_;               \
+        V##r2 = XOR(V##r0, V##r1); V##r1 = V##r0; V##r0 = XOR(V##q, M1); V##q = M2; \
+    } while (0)
+#define HASSH_LM_VARS(T, V) T V##0, V##1, V##2, V##3, V##4, V##5, V##6, V##7, V##8, V##q, V##r0, V##r1, V##r2
+
 /* ------------------------------------------------------- portable AES */
 #if !defined(HASSH_HAVE_SIMD) || defined(HASSH_DISPATCH) || defined(HASSH_WANT_PORTABLE)
 
@@ -505,7 +570,75 @@ static inline uint64_t hassh_large_portable_s(const uint8_t *p, size_t len, uint
                                       hassh_key_p(HASSH_INIT_KEY1))); }
     return hassh_out_p(hassh_fin_p(x));
 }
+/* Long inputs (len >= HASSH_LONG_MIN): two LeMac states.
+ *
+ * LeMac (Bariant, David, Leurent, ToSC 2024(1); message schedule corrected in
+ * ToSC 2025(1)) is an AES-based universal hash: nine 128-bit state words
+ * absorb 64 bytes per step with eight AES rounds, two rounds per 16 bytes
+ * (the lanes need three). Its designers show (MILP) that every differential
+ * trail from message differences to a state collision, through the
+ * absorption and four blank steps, has at least 26 active S-boxes. (This and
+ * the 4-round figure below are estimates in the usual sense: trail bounds,
+ * and differential bounds averaged over random round keys, while hassh64's
+ * round keys are public and the state holds only the seed's 64 bits.) hassh64
+ * uses LeMac's step function unchanged, two independent states for
+ * parallelism (one ymm register holds both), and its own start and
+ * finalization:
+ *   - word i of state j starts as two AES rounds of L(9j+i) ^ sv (seed only);
+ *   - each 128-byte step gives state j the four words at offsets 32k + 16j;
+ *     the final step is aligned to the end of the input, like the stripes;
+ *   - after four blank steps, each of the 18 words passes four AES rounds,
+ *     word w keyed by L(18+w) first, and they are XORed: two nonzero word
+ *     differences then cancel with probability about the 4-round AES
+ *     differential bound (about 2^-113), so a collision needs a state
+ *     collision in both states;
+ *   - lv is XORed in, and fin removes the linearity between the two states. */
+HASSH_INLINE hassh_blk hassh_lkey_p(int w) { return hassh_set_p(HASSH_L[2*w], HASSH_L[2*w+1]); }
+/* The 18 LeMac start words for s, word-major: out + 16(2i + j) = word i of state j. */
+static inline void hassh_lstarts_p(uint8_t *out, uint64_t s) {
+    hassh_blk sv = hassh_sv_ps(s);
+    for (int j = 0; j < 2; j++)
+        for (int i = 0; i < 9; i++)
+            memcpy(out + 16 * (2 * i + j),
+                   hassh_aesenc_p(hassh_aesenc_p(hassh_x_p(hassh_lkey_p(9 * j + i), sv), hassh_key_p(HASSH_INIT_KEY0)),
+                                  hassh_key_p(HASSH_INIT_KEY1)).b, 16);
+}
+HASSH_INLINE hassh_blk hassh_lm_comp_p(int w, hassh_blk x) {
+    x = hassh_x_p(x, hassh_lkey_p(18 + w));
+    for (int r = 0; r < 4; r++) x = hassh_aesenc_p(x, hassh_key_p(16 + r));
+    return x;
+}
+/* ls: the precomputed start words (hassh_lstarts_p layout), or NULL. */
+static inline uint64_t hassh_long_portable_s(const uint8_t *p, size_t len, uint64_t s, const uint8_t *ls) {
+    typedef hassh_blk hassh_lm_t;
+    hassh_blk z = {{0}}, x = z, w[9];
+    HASSH_LM_VARS(hassh_blk, v);
+    uint8_t st[16 * 18];
+    if (!ls) { hassh_lstarts_p(st, s); ls = st; }
+    size_t nsteps = (len + 127) / 128;
+    for (int j = 0; j < 2; j++) {
+        v0 = hassh_ld_p(ls + 16 * j);       v1 = hassh_ld_p(ls + 16 * (2 + j));
+        v2 = hassh_ld_p(ls + 16 * (4 + j)); v3 = hassh_ld_p(ls + 16 * (6 + j));
+        v4 = hassh_ld_p(ls + 16 * (8 + j)); v5 = hassh_ld_p(ls + 16 * (10 + j));
+        v6 = hassh_ld_p(ls + 16 * (12 + j)); v7 = hassh_ld_p(ls + 16 * (14 + j));
+        v8 = hassh_ld_p(ls + 16 * (16 + j));
+        vq = vr0 = vr1 = vr2 = z;
+        for (size_t k = 0; k < nsteps; k++) {
+            const uint8_t *q = p + (k + 1 < nsteps ? 128 * k : len - 128) + 16 * j;
+            HASSH_LM_STEP(v, hassh_ld_p(q), hassh_ld_p(q + 32), hassh_ld_p(q + 64), hassh_ld_p(q + 96),
+                          hassh_aesenc_p, hassh_x_p);
+        }
+        for (int b = 0; b < 4; b++) HASSH_LM_STEP(v, z, z, z, z, hassh_aesenc_p, hassh_x_p);
+        w[0] = v0; w[1] = v1; w[2] = v2; w[3] = v3; w[4] = v4; w[5] = v5; w[6] = v6; w[7] = v7; w[8] = v8;
+        for (int i = 0; i < 9; i++) x = hassh_x_p(x, hassh_lm_comp_p(9 * j + i, w[i]));
+    }
+    { uint64_t lo, hi; hassh_lenvec_s(s, len, &lo, &hi);
+      x = hassh_x_p(x, hassh_aesenc_p(hassh_aesenc_p(hassh_set_p(lo, hi), hassh_key_p(HASSH_INIT_KEY0)),
+                                      hassh_key_p(HASSH_INIT_KEY1))); }
+    return hassh_out_p(hassh_fin_p(x));
+}
 static inline uint64_t hassh_large_portable(const uint8_t *p, size_t len, uint64_t seed) {
+    if (len >= HASSH_LONG_MIN) return hassh_long_portable_s(p, len, hassh_seed_s(seed), NULL);
     return hassh_large_portable_s(p, len, hassh_seed_s(seed), NULL);
 }
 #endif /* portable */
@@ -522,7 +655,8 @@ static inline uint64_t hassh_large_portable(const uint8_t *p, size_t len, uint64
 #if defined(HASSH_HAVE_SIMD) && defined(HASSH_X64)
 #  define HASSH_X86 1
 #  define HASSH_SIMD 1
-#  if defined(__VAES__) && defined(__AVX2__) && !defined(HASSH_DISPATCH)
+#  if defined(__VAES__) && defined(__AVX2__) && !defined(HASSH_DISPATCH) && \
+      (defined(__GNUC__) || defined(__clang__))   /* the long path uses GNU inline asm */
 #    define HASSH_VAES 1
 #  endif
 typedef __m128i hassh_v;
@@ -552,11 +686,11 @@ typedef uint8x16_t hassh_v;
 
 #ifdef HASSH_SIMD
 HASSH_SIMD_INLINE hassh_v hassh_perm(hassh_v x) {
-    for (int r = 0; r < HASSH_ROUNDS; r++) x = HV_ENC(x, HV_KEY(16 + r));
+    HASSH_UNROLL for (int r = 0; r < HASSH_ROUNDS; r++) x = HV_ENC(x, HV_KEY(16 + r));
     return x;
 }
 HASSH_SIMD_INLINE uint64_t hassh_out(hassh_v x) {
-    for (int r = 0; r < HASSH_FIN_ROUNDS; r++) x = HV_ENC(x, HV_KEY(24 + r));
+    HASSH_UNROLL for (int r = 0; r < HASSH_FIN_ROUNDS; r++) x = HV_ENC(x, HV_KEY(24 + r));
     return HV_FOLD(x);
 }
 #define HASSH_INIT_C(i) HV_ENC(HV_ENC(HV_XOR(HV_KEY(i), sv), HV_KEY(HASSH_INIT_KEY0)), HV_KEY(HASSH_INIT_KEY1))
@@ -570,8 +704,85 @@ HASSH_SIMD_INLINE hassh_v hassh_lv(uint64_t s, size_t len) {
 }
 HASSH_SIMD_ENTRY void hassh_starts(uint8_t *out, uint64_t s) {
     const hassh_v sv = hassh_sv(s);
-    for (int i = 0; i < 16; i++) HV_ST(out + 16 * i, HASSH_INIT_C(i));
+    HASSH_UNROLL for (int i = 0; i < 16; i++) HV_ST(out + 16 * i, HASSH_INIT_C(i));
 }
+
+/* Long inputs, 128-bit vectors. With 32 registers (AArch64) both LeMac
+ * states run together; with 16 (SSE) one at a time, over tiles of
+ * HASSH_LM_TILE steps so the second pass re-reads the input from L1. The
+ * states are independent until the end, so the order does not matter. */
+#if defined(HASSH_ARM)
+#  define HASSH_LM_G 2
+#else
+#  define HASSH_LM_G 1
+#endif
+#define HASSH_LM_TILE 64
+#define HV_LKEY(w) HV_LD(&HASSH_L[2 * (w)])
+HASSH_SIMD_ENTRY void hassh_lstarts(uint8_t *out, uint64_t s) {
+    const hassh_v sv = hassh_sv(s);
+    HASSH_UNROLL for (int j = 0; j < 2; j++)
+        HASSH_UNROLL for (int i = 0; i < 9; i++)
+            HV_ST(out + 16 * (2 * i + j),
+                  HV_ENC(HV_ENC(HV_XOR(HV_LKEY(9 * j + i), sv), HV_KEY(HASSH_INIT_KEY0)), HV_KEY(HASSH_INIT_KEY1)));
+}
+#ifndef HASSH_VAES
+/* Four blank steps on the state in a, then the 9 compressed words of state j into x. */
+#define HASSH_LM_FINISH(a, j, x) do {                                           \
+        HASSH_UNROLL for (int b_ = 0; b_ < 4; b_++) HASSH_LM_STEP(a, z, z, z, z, HV_ENC, HV_XOR); \
+        const hassh_v w_[9] = { a##0, a##1, a##2, a##3, a##4, a##5, a##6, a##7, a##8 }; \
+        HASSH_UNROLL for (int i_ = 0; i_ < 9; i_++) {                                        \
+            hassh_v y_ = HV_XOR(w_[i_], HV_LKEY(18 + 9 * (j) + i_));            \
+            HASSH_UNROLL for (int r_ = 0; r_ < 4; r_++) y_ = HV_ENC(y_, HV_KEY(16 + r_));    \
+            x = HV_XOR(x, y_);                                                  \
+        }                                                                       \
+    } while (0)
+#define HASSH_LM_START(a, j) do {                                               \
+        a##0 = HV_LD(ls + 16 * (j));      a##1 = HV_LD(ls + 16 * (2 + (j)));    \
+        a##2 = HV_LD(ls + 16 * (4 + (j)));  a##3 = HV_LD(ls + 16 * (6 + (j)));  \
+        a##4 = HV_LD(ls + 16 * (8 + (j)));  a##5 = HV_LD(ls + 16 * (10 + (j))); \
+        a##6 = HV_LD(ls + 16 * (12 + (j))); a##7 = HV_LD(ls + 16 * (14 + (j))); \
+        a##8 = HV_LD(ls + 16 * (16 + (j))); a##q = a##r0 = a##r1 = a##r2 = z;   \
+    } while (0)
+HASSH_SIMD_BULK uint64_t hassh_long(const uint8_t *p, size_t len, uint64_t s, const uint8_t *ls) {
+    typedef hassh_v hassh_lm_t;
+    const hassh_v z = HV_XOR(HV_KEY(0), HV_KEY(0));
+    uint8_t st[16 * 18];
+    if (!ls) { hassh_lstarts(st, s); ls = st; }
+    const size_t nsteps = (len + 127) / 128;
+    const uint8_t *last = p + len - 128;
+    hassh_v x = hassh_lv(s, len);
+    HASSH_LM_VARS(hassh_v, a);
+    HASSH_LM_START(a, 0);
+#if HASSH_LM_G == 2
+    HASSH_LM_VARS(hassh_v, b);
+    HASSH_LM_START(b, 1);
+    for (size_t k = 0; k < nsteps; k++) {
+        const uint8_t *q = k + 1 < nsteps ? p + 128 * k : last;
+        HASSH_LM_STEP(a, HV_LD(q), HV_LD(q + 32), HV_LD(q + 64), HV_LD(q + 96), HV_ENC, HV_XOR);
+        HASSH_LM_STEP(b, HV_LD(q + 16), HV_LD(q + 48), HV_LD(q + 80), HV_LD(q + 112), HV_ENC, HV_XOR);
+    }
+    HASSH_LM_FINISH(a, 0, x);
+    HASSH_LM_FINISH(b, 1, x);
+#else
+    HASSH_LM_VARS(hassh_v, b);
+    HASSH_LM_START(b, 1);
+    for (size_t k0 = 0; k0 < nsteps; k0 += HASSH_LM_TILE) {
+        size_t k1 = nsteps - k0 < HASSH_LM_TILE ? nsteps : k0 + HASSH_LM_TILE;
+        for (size_t k = k0; k < k1; k++) {
+            const uint8_t *q = k + 1 < nsteps ? p + 128 * k : last;
+            HASSH_LM_STEP(a, HV_LD(q), HV_LD(q + 32), HV_LD(q + 64), HV_LD(q + 96), HV_ENC, HV_XOR);
+        }
+        for (size_t k = k0; k < k1; k++) {
+            const uint8_t *q = (k + 1 < nsteps ? p + 128 * k : last) + 16;
+            HASSH_LM_STEP(b, HV_LD(q), HV_LD(q + 32), HV_LD(q + 64), HV_LD(q + 96), HV_ENC, HV_XOR);
+        }
+    }
+    HASSH_LM_FINISH(a, 0, x);
+    HASSH_LM_FINISH(b, 1, x);
+#endif
+    return hassh_out(x);
+}
+#endif /* !HASSH_VAES */
 
 #ifndef HASSH_VAES
 /* 65..128 bytes: 8 lanes, 4 from the head and 4 from the tail. */
@@ -592,29 +803,29 @@ HASSH_SIMD_ENTRY uint64_t hassh_65_128(const uint8_t *p, size_t len, uint64_t s,
 HASSH_SIMD_BULK uint64_t hassh_large(const uint8_t *p, size_t len, uint64_t s, const uint8_t *st) {
     const hassh_v sv = hassh_sv(s);
     hassh_v a[16];
-    for (int i = 0; i < 16; i++) a[i] = HASSH_INIT(i);
+    HASSH_UNROLL for (int i = 0; i < 16; i++) a[i] = HASSH_INIT(i);
     if (len <= 256) {
         const uint8_t *q = p + len - 128;
-        for (int i = 0; i < 8; i++)  a[i] = hassh_perm(HV_XOR(a[i], HV_LD(p + 16 * i)));
-        for (int i = 8; i < 16; i++) a[i] = hassh_perm(HV_XOR(a[i], HV_LD(q + 16 * (i - 8))));
+        HASSH_UNROLL for (int i = 0; i < 8; i++)  a[i] = hassh_perm(HV_XOR(a[i], HV_LD(p + 16 * i)));
+        HASSH_UNROLL for (int i = 8; i < 16; i++) a[i] = hassh_perm(HV_XOR(a[i], HV_LD(q + 16 * (i - 8))));
     } else {
         const uint8_t *last = p + len - 256;
         for (;;) {
             const uint8_t *q = p < last ? p : last;
-            for (int i = 0; i < 16; i++) a[i] = hassh_perm(HV_XOR(a[i], HV_LD(q + 16 * i)));
+            HASSH_UNROLL for (int i = 0; i < 16; i++) a[i] = hassh_perm(HV_XOR(a[i], HV_LD(q + 16 * i)));
             if (q == last) break;
             p += 256;
         }
     }
     hassh_v x = a[0];
-    for (int i = 1; i < 16; i++) x = HV_XOR(x, a[i]);
+    HASSH_UNROLL for (int i = 1; i < 16; i++) x = HV_XOR(x, a[i]);
     return hassh_out(HV_XOR(x, hassh_lv(s, len)));
 }
 #else /* HASSH_VAES: ymm j holds lanes (2j, 2j+1); same function, twice as wide. */
 HASSH_INLINE __m256i hassh_key2(int j) { return _mm256_loadu_si256((const __m256i *)(const void *)&HASSH_K[4 * j]); }
 HASSH_INLINE __m256i hassh_ld2(const uint8_t *p) { return _mm256_loadu_si256((const __m256i *)(const void *)p); }
 HASSH_INLINE __m256i hassh_perm2(__m256i x) {
-    for (int r = 0; r < HASSH_ROUNDS; r++)
+    HASSH_UNROLL for (int r = 0; r < HASSH_ROUNDS; r++)
         x = _mm256_aesenc_epi128(x, _mm256_broadcastsi128_si256(HV_KEY(16 + r)));
     return x;
 }
@@ -645,16 +856,16 @@ HASSH_INLINE uint64_t hassh_65_128(const uint8_t *p, size_t len, uint64_t s, con
 static inline uint64_t hassh_large(const uint8_t *p, size_t len, uint64_t s, const uint8_t *st) {
     const __m256i sv = hassh_sv2(s);
     __m256i a[8];
-    for (int j = 0; j < 8; j++) a[j] = hassh_start2(j, sv, st);
+    HASSH_UNROLL for (int j = 0; j < 8; j++) a[j] = hassh_start2(j, sv, st);
     if (len <= 256) {
         const uint8_t *q = p + len - 128;
-        for (int j = 0; j < 4; j++) a[j] = hassh_perm2(_mm256_xor_si256(a[j], hassh_ld2(p + 32 * j)));
-        for (int j = 4; j < 8; j++) a[j] = hassh_perm2(_mm256_xor_si256(a[j], hassh_ld2(q + 32 * (j - 4))));
+        HASSH_UNROLL for (int j = 0; j < 4; j++) a[j] = hassh_perm2(_mm256_xor_si256(a[j], hassh_ld2(p + 32 * j)));
+        HASSH_UNROLL for (int j = 4; j < 8; j++) a[j] = hassh_perm2(_mm256_xor_si256(a[j], hassh_ld2(q + 32 * (j - 4))));
     } else {
         const uint8_t *last = p + len - 256;
         for (;;) {
             const uint8_t *q = p < last ? p : last;
-            for (int j = 0; j < 8; j++) a[j] = hassh_perm2(_mm256_xor_si256(a[j], hassh_ld2(q + 32 * j)));
+            HASSH_UNROLL for (int j = 0; j < 8; j++) a[j] = hassh_perm2(_mm256_xor_si256(a[j], hassh_ld2(q + 32 * j)));
             if (q == last) break;
             p += 256;
         }
@@ -662,6 +873,96 @@ static inline uint64_t hassh_large(const uint8_t *p, size_t len, uint64_t s, con
     __m256i x = _mm256_xor_si256(_mm256_xor_si256(_mm256_xor_si256(a[0], a[1]), _mm256_xor_si256(a[2], a[3])),
                                  _mm256_xor_si256(_mm256_xor_si256(a[4], a[5]), _mm256_xor_si256(a[6], a[7])));
     return hassh_out2(x, s, len);
+}
+/* Long inputs with VAES: one ymm register holds word i of both states. */
+/* n LeMac steps (n >= 1) at q, q + 128, ...; A = S0..S8, R0, R1, R1^R2.
+ * LeMac's RR (the previous step's M2) is re-read from *prev + 64; *prev is
+ * updated to the last step's address.
+ *
+ * Inline assembly (GCC and Clang share the syntax) rather than intrinsics:
+ * the 12 state registers plus 4 message words fill all 16 ymm registers, and
+ * GCC's allocator spills inside the loop at -O3 (measured 15 bytes/cycle
+ * against 35 here). Each message word is loaded exactly once, since an
+ * unaligned 32-byte load that splits a cache line is expensive; the
+ * prefetch keeps L2-resident inputs streaming. */
+static const uint8_t hassh_zero128[128] = {0};
+static inline void hassh_lm_steps2(uint8_t *A, const uint8_t *q, size_t n, const uint8_t **prev) {
+    const uint8_t *pv = *prev;
+    __asm__ volatile(
+        "vmovdqu 0x000(%[a]), %%ymm0\n\t"  "vmovdqu 0x020(%[a]), %%ymm1\n\t"
+        "vmovdqu 0x040(%[a]), %%ymm2\n\t"  "vmovdqu 0x060(%[a]), %%ymm3\n\t"
+        "vmovdqu 0x080(%[a]), %%ymm4\n\t"  "vmovdqu 0x0a0(%[a]), %%ymm5\n\t"
+        "vmovdqu 0x0c0(%[a]), %%ymm6\n\t"  "vmovdqu 0x0e0(%[a]), %%ymm7\n\t"
+        "vmovdqu 0x100(%[a]), %%ymm8\n\t"  "vmovdqu 0x120(%[a]), %%ymm9\n\t"
+        "vmovdqu 0x140(%[a]), %%ymm10\n\t" "vmovdqu 0x160(%[a]), %%ymm11\n\t"
+        ".p2align 5\n"
+        "1:\n\t"
+        "prefetcht0 1024(%[q])\n\t"
+        "prefetcht0 1088(%[q])\n\t"
+        "vmovdqu 64(%[q]), %%ymm14\n\t"            /* M2 */
+        "vmovdqu 96(%[q]), %%ymm15\n\t"            /* M3 */
+        "vmovdqu 32(%[q]), %%ymm13\n\t"            /* M1 */
+        "vmovdqu (%[q]), %%ymm12\n\t"              /* M0 */
+        "vpxor %%ymm8, %%ymm14, %%ymm14\n\t"
+        "vpxor %%ymm0, %%ymm14, %%ymm14\n\t"       /* new S0 = S0 ^ S8 ^ M2 */
+        "vaesenc %%ymm15, %%ymm7, %%ymm8\n\t"
+        "vaesenc %%ymm13, %%ymm6, %%ymm7\n\t"
+        "vaesenc %%ymm13, %%ymm5, %%ymm6\n\t"
+        "vaesenc %%ymm12, %%ymm4, %%ymm5\n\t"
+        "vaesenc %%ymm12, %%ymm3, %%ymm4\n\t"
+        "vaesenc %%ymm11, %%ymm2, %%ymm3\n\t"
+        "vaesenc %%ymm15, %%ymm1, %%ymm2\n\t"
+        "vaesenc %%ymm15, %%ymm0, %%ymm1\n\t"
+        "vmovdqa %%ymm14, %%ymm0\n\t"
+        "vpxor %%ymm9, %%ymm10, %%ymm11\n\t"       /* R1^R2 for the next step */
+        "vmovdqa %%ymm9, %%ymm10\n\t"              /* R1 = R0 */
+        "vpxor 64(%[pv]), %%ymm13, %%ymm9\n\t"     /* R0 = RR ^ M1 */
+        "mov %[q], %[pv]\n\t"
+        "add $128, %[q]\n\t"
+        "dec %[n]\n\t"
+        "jnz 1b\n\t"
+        "vmovdqu %%ymm0, 0x000(%[a])\n\t"  "vmovdqu %%ymm1, 0x020(%[a])\n\t"
+        "vmovdqu %%ymm2, 0x040(%[a])\n\t"  "vmovdqu %%ymm3, 0x060(%[a])\n\t"
+        "vmovdqu %%ymm4, 0x080(%[a])\n\t"  "vmovdqu %%ymm5, 0x0a0(%[a])\n\t"
+        "vmovdqu %%ymm6, 0x0c0(%[a])\n\t"  "vmovdqu %%ymm7, 0x0e0(%[a])\n\t"
+        "vmovdqu %%ymm8, 0x100(%[a])\n\t"  "vmovdqu %%ymm9, 0x120(%[a])\n\t"
+        "vmovdqu %%ymm10, 0x140(%[a])\n\t" "vmovdqu %%ymm11, 0x160(%[a])\n\t"
+        : [q] "+r"(q), [n] "+r"(n), [pv] "+r"(pv)
+        : [a] "r"(A)
+        : "memory", "cc", "xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "xmm6", "xmm7",
+          "xmm8", "xmm9", "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15");
+    *prev = pv;
+}
+static inline uint64_t hassh_long(const uint8_t *p, size_t len, uint64_t s, const uint8_t *ls) {
+    typedef __m256i hassh_lm_t;
+    const __m256i z = _mm256_setzero_si256();
+    uint8_t st[16 * 18];
+    if (!ls) { hassh_lstarts(st, s); ls = st; }
+    /* A byte buffer with unaligned accesses rather than an __m256i array:
+     * MinGW GCC does not realign the stack for 32-byte locals (GCC bug 54412)
+     * yet emits aligned moves for them. The asm uses unaligned moves. */
+    uint8_t A[12 * 32];
+    memcpy(A, ls, 9 * 32);
+    memset(A + 9 * 32, 0, 3 * 32);
+    size_t nsteps = (len + 127) / 128;
+    const uint8_t *prev = hassh_zero128;
+    if (nsteps > 1) hassh_lm_steps2(A, p, nsteps - 1, &prev);
+    hassh_lm_steps2(A, p + len - 128, 1, &prev);   /* the final step is aligned to the end */
+    HASSH_LM_VARS(__m256i, a);
+    a0 = hassh_ld2(A);       a1 = hassh_ld2(A + 32);  a2 = hassh_ld2(A + 64);  a3 = hassh_ld2(A + 96);
+    a4 = hassh_ld2(A + 128); a5 = hassh_ld2(A + 160); a6 = hassh_ld2(A + 192); a7 = hassh_ld2(A + 224);
+    a8 = hassh_ld2(A + 256);
+    aq = hassh_ld2(prev + 64); ar0 = hassh_ld2(A + 288); ar1 = hassh_ld2(A + 320); ar2 = hassh_ld2(A + 352);
+    HASSH_UNROLL for (int b = 0; b < 4; b++) HASSH_LM_STEP(a, z, z, z, z, _mm256_aesenc_epi128, _mm256_xor_si256);
+    const __m256i w[9] = { a0, a1, a2, a3, a4, a5, a6, a7, a8 };
+    __m256i acc = z;
+    HASSH_UNROLL for (int i = 0; i < 9; i++) {
+        __m256i y = _mm256_xor_si256(w[i], _mm256_set_m128i(HV_LKEY(27 + i), HV_LKEY(18 + i)));
+        HASSH_UNROLL for (int r = 0; r < 4; r++) y = _mm256_aesenc_epi128(y, _mm256_broadcastsi128_si256(HV_KEY(16 + r)));
+        acc = _mm256_xor_si256(acc, y);
+    }
+    return hassh_out(_mm_xor_si128(_mm_xor_si128(_mm256_castsi256_si128(acc), _mm256_extracti128_si256(acc, 1)),
+                                   hassh_lv(s, len)));
 }
 #endif /* HASSH_VAES */
 #endif /* HASSH_SIMD */
@@ -688,15 +989,23 @@ HASSH_INLINE int hassh_cpu_aes(void) {
 #endif
 
 /* 65+ bytes with s = hassh_seed_s(seed); st = precomputed lane starts or NULL. */
-HASSH_INLINE uint64_t hassh_over64(const uint8_t *p, size_t len, uint64_t s, const uint8_t *st) {
+HASSH_INLINE uint64_t hassh_over64(const uint8_t *p, size_t len, uint64_t s, const uint8_t *st,
+                                   const uint8_t *ls) {
 #if defined(HASSH_DISPATCH)
-    if (hassh_cpu_aes())
-        return len <= 128 ? hassh_65_128(p, len, s, st) : hassh_large(p, len, s, st);
+    if (hassh_cpu_aes()) {
+        if (len <= 128) return hassh_65_128(p, len, s, st);
+        return len < HASSH_LONG_MIN ? hassh_large(p, len, s, st) : hassh_long(p, len, s, ls);
+    }
+    if (len >= HASSH_LONG_MIN) return hassh_long_portable_s(p, len, s, ls);
     return hassh_large_portable_s(p, len, s, st);
+#elif defined(HASSH_VAES)
+    if (len <= 128) return hassh_65_128(p, len, s, st);
+    return len < HASSH_LONG_MIN ? hassh_large(p, len, s, st) : hassh_long(p, len, s, ls);
 #elif defined(HASSH_SIMD)
     if (len <= 128) return hassh_65_128(p, len, s, st);
-    return hassh_large(p, len, s, st);
+    return len < HASSH_LONG_MIN ? hassh_large(p, len, s, st) : hassh_long(p, len, s, ls);
 #else
+    if (len >= HASSH_LONG_MIN) return hassh_long_portable_s(p, len, s, ls);
     return hassh_large_portable_s(p, len, s, st);
 #endif
 }
@@ -706,7 +1015,7 @@ HASSH_INLINE uint64_t hassh64(const void *data, size_t len, uint64_t seed) {
     const uint64_t s = hassh_seed_s(seed);
     if (HASSH_LIKELY(len <= 32)) return hassh_small_k(p, len, s, hassh_seed_s2(s, len));
     if (len <= 64) return hassh_mid_k(p, len, s, hassh_seed_s2(s, len));
-    return hassh_over64(p, len, s, NULL);
+    return hassh_over64(p, len, s, NULL, NULL);
 }
 
 /* Prepared seed. A hash table hashes millions of keys with one seed, so the
@@ -718,24 +1027,27 @@ HASSH_INLINE uint64_t hassh64(const void *data, size_t len, uint64_t seed) {
  *
  * The result is always identical to hassh64(); only the work per call drops:
  * two dependent multiplies fewer up to 64 bytes, and above that the 16 AES
- * lane starts (two rounds each) are precomputed. The key is 784 bytes; keep
- * one per seed, not one per call. */
+ * lane starts and the 18 LeMac start words (two rounds each) are
+ * precomputed. The key is 1072 bytes; keep one per seed, not one per call. */
 typedef struct hassh64_key {
     uint64_t s;
     uint64_t s2[65];          /* hassh_seed_s2(s, len) for len 0..64 */
     uint8_t  start[16 * 16];  /* the 16 AES lane starts */
+    uint8_t  lstart[16 * 18]; /* the 18 LeMac start words (long inputs) */
 } hassh64_key;
 
 static inline void hassh64_key_init(hassh64_key *k, uint64_t seed) {
     k->s = hassh_seed_s(seed);
     for (size_t len = 0; len <= 64; len++) k->s2[len] = hassh_seed_s2(k->s, len);
 #if defined(HASSH_DISPATCH)
-    if (hassh_cpu_aes()) hassh_starts(k->start, k->s);
-    else hassh_starts_p(k->start, k->s);
+    if (hassh_cpu_aes()) { hassh_starts(k->start, k->s); hassh_lstarts(k->lstart, k->s); }
+    else { hassh_starts_p(k->start, k->s); hassh_lstarts_p(k->lstart, k->s); }
 #elif defined(HASSH_SIMD)
     hassh_starts(k->start, k->s);
+    hassh_lstarts(k->lstart, k->s);
 #else
     hassh_starts_p(k->start, k->s);
+    hassh_lstarts_p(k->lstart, k->s);
 #endif
 }
 
@@ -743,13 +1055,14 @@ HASSH_INLINE uint64_t hassh64_keyed(const hassh64_key *k, const void *data, size
     const uint8_t *p = (const uint8_t *)data;
     if (HASSH_LIKELY(len <= 32)) return hassh_small_k(p, len, k->s, k->s2[len]);
     if (len <= 64) return hassh_mid_k(p, len, k->s, k->s2[len]);
-    return hassh_over64(p, len, k->s, k->start);
+    return hassh_over64(p, len, k->s, k->start, k->lstart);
 }
 
 /* Internal macros stay internal. HASSH_P, HASSH_K and the hassh_* helpers
  * remain visible (the test suite uses them); no configuration macro does. */
 #undef HASSH_INLINE
 #undef HASSH_LIKELY
+#undef HASSH_UNROLL
 #undef HASSH_X64
 #undef HASSH_HAVE_SIMD
 #undef HASSH_DISPATCH
@@ -767,6 +1080,15 @@ HASSH_INLINE uint64_t hassh64_keyed(const hassh64_key *k, const void *data, size
 #undef HV_KEY
 #undef HV_SET
 #undef HV_FOLD
+#undef HV_LKEY
+#ifndef HASSH_WANT_PORTABLE   /* test/lemac_ref.c checks the step function */
+#  undef HASSH_LM_STEP
+#  undef HASSH_LM_VARS
+#endif
+#undef HASSH_LM_FINISH
+#undef HASSH_LM_START
+#undef HASSH_LM_G
+#undef HASSH_LM_TILE
 #undef HASSH_TGT
 #undef HASSH_SIMD_INLINE
 #undef HASSH_SIMD_ENTRY

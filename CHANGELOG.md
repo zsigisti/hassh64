@@ -6,9 +6,18 @@ All notable changes to this project are documented here. hassh64 follows
 ## [2.0.0] - unreleased
 
 **Output changes for inputs longer than 64 bytes.** Inputs of up to 64 bytes hash exactly as in
-1.x. New test vectors in `test/vectors.h`; `SPEC.md` describes 2.x.
+1.x. New test vectors in `test/vectors.h` (548, now up to 20000 bytes); `SPEC.md` describes 2.x.
 
 ### Changed
+- Inputs of 4096 bytes and more use a new absorber built on LeMac's step function (Bariant,
+  David, Leurent, ToSC 2024; message schedule as corrected in ToSC 2025): two interleaved
+  LeMac states, 2 AES rounds per 16 bytes, and the designers' bound of at least 26 active
+  S-boxes for any differential trail to a state collision. Bulk speed with VAES +45-60% over
+  the 2.0 lanes for aligned input, +20-35% for unaligned; AES-NI without VAES about +25%.
+  Defined in `SPEC.md`; `test/lemac_ref.c` checks the step against the LeMac reference code and
+  `test/longstats.c` adds avalanche, differential and sparse-key tests for long inputs.
+- The VAES long-input loop is inline assembly (GCC and Clang): with intrinsics, GCC 16 at -O3
+  spilled the LeMac state and ran at 15 bytes/cycle instead of 35.
 - 3 AES rounds per 16-byte block instead of 4: bulk speed +29% (18.7 -> 24.1 bytes/cycle in
   SMHasher3), throughput on 128-512-byte keys about 40% better. Cost: fixed input pairs that
   collide for about 2^-51 of seeds (1.x: none; ideal: 2^-64). See README, Security.
@@ -19,6 +28,10 @@ All notable changes to this project are documented here. hassh64 follows
 - Passes SMHasher3 `--extra` 252/252, and every attack regression test.
 
 ### Tried and rejected
+- Four LeMac states (256-byte steps) for AVX-512: twice the finalization cost, and with 16
+  ymm registers the AVX2 build spilled; two states fill exactly one ymm register per word.
+- LeMac below 4096 bytes: its finalization (4 blank steps, 4 rounds per word) costs more than
+  it saves until about 4-6 KiB.
 - 2 AES rounds per block (68% faster in bulk): real 64-bit collisions in SMHasher3's Sparse test.
 - 2 final rounds instead of 3: passes 252/252, but saves only about 0.7 ns above 64 bytes.
 

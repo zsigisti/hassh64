@@ -8,7 +8,7 @@
 #[allow(unused_macros)]
 macro_rules! simd_core {
     ($(#[$tf:meta])*) => {
-        use crate::consts::{FIN_KEY0, FIN_ROUNDS, INIT_KEY0, INIT_KEY1, ROUNDS, ROUND_KEY0};
+        use crate::consts::{FIN_KEY0, FIN_ROUNDS, INIT_KEY0, INIT_KEY1, L, LONG_MIN, ROUNDS, ROUND_KEY0};
         use crate::scalar::{len_vec, seed_s, seed_vec};
 
         $(#[$tf])*
@@ -35,6 +35,86 @@ macro_rules! simd_core {
             enc(enc(xor(key(i), sv), key(INIT_KEY0)), key(INIT_KEY1))
         }
 
+        /// LeMac key w (lo, hi halves of L).
+        $(#[$tf])*
+        #[inline]
+        unsafe fn lkey(w: usize) -> V {
+            set(L[2 * w], L[2 * w + 1])
+        }
+
+        /// One LeMac step; `r` = RR, R0, R1 and R1 ^ R2 (the only use of R2).
+        $(#[$tf])*
+        #[inline]
+        unsafe fn lm_step(s: &mut [V; 9], r: &mut [V; 4], m0: V, m1: V, m2: V, m3: V) {
+            let s0 = xor(xor(s[0], s[8]), m2);
+            s[8] = enc(s[7], m3);
+            s[7] = enc(s[6], m1);
+            s[6] = enc(s[5], m1);
+            s[5] = enc(s[4], m0);
+            s[4] = enc(s[3], m0);
+            s[3] = enc(s[2], r[3]);
+            s[2] = enc(s[1], m3);
+            s[1] = enc(s[0], m3);
+            s[0] = s0;
+            r[3] = xor(r[1], r[2]);
+            r[2] = r[1];
+            r[1] = xor(r[0], m1);
+            r[0] = m2;
+        }
+
+        /// 4096+ bytes: two LeMac states, one after the other over 64-step
+        /// tiles (16 vector registers hold one state; the second pass re-reads
+        /// the tile from L1).
+        $(#[$tf])*
+        #[inline]
+        unsafe fn long(data: &[u8], s: u64, sv: V, lv: V) -> u64 {
+            const TILE: usize = 64;
+            let len = data.len();
+            let p = data.as_ptr();
+            let last = p.add(len - 128);
+            let nsteps = (len + 127) / 128;
+            let z = xor(sv, sv);
+            let _ = s;
+            let mut st = [[z; 9]; 2];
+            let mut r = [[z; 4]; 2];
+            for j in 0..2 {
+                for i in 0..9 {
+                    st[j][i] = enc(enc(xor(lkey(9 * j + i), sv), key(INIT_KEY0)), key(INIT_KEY1));
+                }
+            }
+            let mut k0 = 0;
+            while k0 < nsteps {
+                let k1 = if nsteps - k0 < TILE { nsteps } else { k0 + TILE };
+                for j in 0..2 {
+                    let mut a = st[j];
+                    let mut b = r[j];
+                    for k in k0..k1 {
+                        let q = if k + 1 < nsteps { p.add(128 * k) } else { last }.add(16 * j);
+                        lm_step(&mut a, &mut b, ld(q), ld(q.add(32)), ld(q.add(64)), ld(q.add(96)));
+                    }
+                    st[j] = a;
+                    r[j] = b;
+                }
+                k0 = k1;
+            }
+            let mut x = lv;
+            for j in 0..2 {
+                let mut a = st[j];
+                let mut b = r[j];
+                for _ in 0..4 {
+                    lm_step(&mut a, &mut b, z, z, z, z);
+                }
+                for i in 0..9 {
+                    let mut y = xor(a[i], lkey(18 + 9 * j + i));
+                    for rr in 0..4 {
+                        y = enc(y, key(ROUND_KEY0 + rr));
+                    }
+                    x = xor(x, y);
+                }
+            }
+            out(x)
+        }
+
         /// 65+ bytes.
         ///
         /// # Safety
@@ -50,6 +130,9 @@ macro_rules! simd_core {
             // Length vector: independent of the lanes, so it runs in parallel.
             let (llo, lhi) = len_vec(s, len as u64);
             let lv = enc(enc(set(llo, lhi), key(INIT_KEY0)), key(INIT_KEY1));
+            if len >= LONG_MIN {
+                return long(data, s, sv, lv);
+            }
             let p = data.as_ptr();
             let e = p.add(len);
             if len <= 128 {

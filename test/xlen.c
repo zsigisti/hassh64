@@ -101,6 +101,44 @@ int main(void) {
         report("lane swap 0<->4, start diff guessed at seed 0", eq, N);
     }
 
+    /* Long inputs (LeMac path), from the 2026-11-06 review. Each pair absorbs
+     * identical or related blocks; none may collide for any tested seed. */
+    {
+        static uint8_t X[8192], Y[8192];
+        struct { size_t lx, ly; int kind; const char *n; } lc[] = {
+            {4097, 4224, 0, "LeMac: zeros 4097 vs 4224 (same blocks)"},
+            {4100, 4101, 0, "LeMac: zeros 4100 vs 4101 (same blocks)"},
+            {4097, 4100, 1, "LeMac: period-3 4097 vs 4100 (same blocks)"},
+            {4096, 4224, 2, "LeMac: M vs M + 128 zero bytes"},
+            {4096, 4096, 3, "LeMac: state 0 <-> state 1 word swap"},
+            {4096, 4096, 4, "LeMac: same difference in both states"},
+            {4096, 4096, 5, "LeMac: M2 at step t vs M1 at t+1 (R0 cancel)"},
+            {4160, 4160, 6, "LeMac: byte absorbed twice by the overlap"},
+            {4096, 4095, 7, "LeMac/lanes: prefix 4096 vs 4095"},
+        };
+        for (size_t c = 0; c < sizeof lc / sizeof *lc; c++) {
+            for (size_t i = 0; i < sizeof X; i++) X[i] = (uint8_t)rnd();
+            switch (lc[c].kind) {
+            case 0: memset(X, 0, sizeof X); memset(Y, 0, sizeof Y); break;
+            case 1: for (size_t i = 0; i < sizeof X; i++) X[i] = Y[i] = (uint8_t)(i % 3 * 85); break;
+            case 2: memcpy(Y, X, 4096); memset(Y + 4096, 0, 128); break;
+            case 3: memcpy(Y, X, 4096);
+                    for (size_t q = 0; q < 4096; q += 32) { memcpy(Y + q, X + q + 16, 16); memcpy(Y + q + 16, X + q, 16); }
+                    break;
+            case 4: memcpy(Y, X, 4096); Y[1000 / 32 * 32 + 3] ^= 0x5a; Y[1000 / 32 * 32 + 19] ^= 0x5a; break;
+            case 5: memcpy(Y, X, 4096); Y[1024 + 64 + 5] ^= 0x77; Y[1024 + 128 + 32 + 5] ^= 0x77; break;
+            case 6: memcpy(Y, X, 4160); Y[4100] ^= 1; break;           /* bytes 4032..4095 are read twice */
+            case 7: memcpy(Y, X, 4096); break;
+            }
+            int eq = 0;
+            for (int k = 0; k < N; k++) {
+                uint64_t seed = k == 0 ? 0 : rnd();
+                eq += hassh64(X, lc[c].lx, seed) == hassh64(Y, lc[c].ly, seed);
+            }
+            report(lc[c].n, eq, N);
+        }
+    }
+
     printf(fails ? "FAIL: %d attack(s) still work\n" : "all cross-length / lane-start attacks fail\n", fails);
     return fails != 0;
 }

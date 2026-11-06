@@ -33,6 +33,26 @@ d192e819d6ef5218 d69906245565a910 f40e35855771202a 106aa07032bbd1b8
 748f82ee5defb2fc 78a5636f43172f60 84c87814a1f0ab72 8cc702081a6439ec
 90befffa23631e28 a4506cebde82bde9 bef9a3f7b2c67915 c67178f2e372532b""".split()]
 assert len(P) == 8 and len(K) == 64
+L = [int(x, 16) for x in """
+7ba0ea2d98160007 7eabf2d0c21f964a 8dbe8d038b409545 90bb1721582e8285
+99a2ad45936d4e61 9f86e289fe03e739 a84c4472faa9a82f b3df34fce89e0532
+b99bb8d7b173534f bc76cbab1aea1f9c c226a69a780f3cc3 d304f19aa233957d
+de1be20a212129dd e39bb43755141950 ee84927cea48ddd2 f3edd2773c523b67
+fbfdfe53a8d32f2a 0bee2c7ab77e9e25 0e90181cf1b09e56 25f57204c725bed8
+2da45582cd598b32 3a52c34c203bfcf3 41dc0172cd1991c1 495796fcb33cc1c0
+4bd31fc693f9f16e 533cde2115f5a9a0 5f7abfe36e99c1d3 66c206b310a57e6f
+6dfcc6bc39603f61 7062f20f86fd1052 778d51277adec865 7eaba3cc25da7048
+8363eccc37a5be05 85be1c253beba54e 93c04028f348bbc5 9f4a205fd05b2148
+a19535651ca6d2de a627bb0fbf027bc7 acfa80891da2f06b b3c29b23031a7f9d
+b602f6fac7d3d74d c36cee0a10c7ba49 c7dc81eea9ebad4f ce7b8471b0f809df
+d740288c84df269c e21dba7ac2290607 eabbff66be175964 f56a9e60f62cea92
+fde41d729d126eab 0434d0970e42e781 0a7cb752a3f1cd86 0ea7d22d6bcd7382
+16f2987f9495a5ee 1d20cdcd45b8de1e 213af85a39b0c320 2964505c52a2f35b
+2d738e114181e082 3b8cea0e71c58aaf 4584e6ae9f54016e 515f4356903dccc2
+5356112ddfd5a8e9 5d1bc3edbe2c897a 5f0da9f8ed53548b 62ef0be4d5492e78
+64de896eace0be7f 6e801ba3078ae05f 7bdb3595cdadf50a 7fa5377856834c98
+818916bad3d008a8 854e959f834021a7 926a82c27137e2c6 9622c7ba7d179197""".split()]
+assert len(L) == 72
 
 
 def _sbox():
@@ -102,6 +122,38 @@ def key(j):
     return blk(K[2 * j], K[2 * j + 1])
 
 
+def lkey(w):
+    return blk(L[2 * w], L[2 * w + 1])
+
+
+def lemac(p, n, sv, lv, k16, k17, k18, k19, k30, k31):
+    """LeMac absorber for n >= 4096; returns the pre-fin block x."""
+    Z = bytes(16)
+    nsteps = -(-n // 128)
+    x = lv
+    for j in range(2):
+        S = [aesenc(aesenc(bxor(lkey(9 * j + i), sv), k30), k31) for i in range(9)]
+        RR = R0 = R1 = R2 = Z
+
+        def step(M0, M1, M2, M3):
+            nonlocal S, RR, R0, R1, R2
+            S = [bxor(bxor(S[0], S[8]), M2), aesenc(S[0], M3), aesenc(S[1], M3),
+                 aesenc(S[2], bxor(R1, R2)), aesenc(S[3], M0), aesenc(S[4], M0),
+                 aesenc(S[5], M1), aesenc(S[6], M1), aesenc(S[7], M3)]
+            R2, R1, R0, RR = R1, R0, bxor(RR, M1), M2
+
+        for k in range(nsteps):
+            q = 128 * k if k < nsteps - 1 else n - 128
+            o = q + 16 * j
+            step(p[o:o + 16], p[o + 32:o + 48], p[o + 64:o + 80], p[o + 96:o + 112])
+        for _ in range(4):
+            step(Z, Z, Z, Z)
+        for i in range(9):
+            c = aesenc(aesenc(aesenc(aesenc(bxor(S[i], lkey(18 + 9 * j + i)), k16), k17), k18), k19)
+            x = bxor(x, c)
+    return x
+
+
 def hassh64(p, seed=0):
     """64-bit hash of the bytes-like p with a 64-bit seed."""
     p = bytes(p)
@@ -156,6 +208,11 @@ def hassh64(p, seed=0):
     lv = aesenc(aesenc(blk(fold(s ^ L ^ P[4], P[5]), fold(s ^ L ^ P[6], P[7])), k30), k31)
     init = lambda i: aesenc(aesenc(bxor(key(i), sv), k30), k31)
     ld = lambda i: p[i:i + 16]
+
+    if n >= 4096:
+        x = lemac(p, n, sv, lv, k16, k17, k18, key(19), k30, k31)
+        f = fin(x)
+        return int.from_bytes(f[:8], "little") ^ int.from_bytes(f[8:], "little")
 
     if n <= 128:
         acc = [init(i) for i in range(8)]

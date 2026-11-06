@@ -29,7 +29,7 @@ uint64_t h = hassh64(data, len, seed);
 - **Clean:** passes all 252 SMHasher3 `--extra` quality tests.
 - **Portable:** C99 / C++11, no dependencies. Uses AES-NI, VAES or ARMv8 AES when present
   (detected at run time on x86-64) and portable C everywhere else, with bit-identical output.
-- **Specified:** [`SPEC.md`](SPEC.md) plus 532 frozen test vectors, so it can be ported to any
+- **Specified:** [`SPEC.md`](SPEC.md) plus 548 frozen test vectors, so it can be ported to any
   language. A Python port written from the spec alone passes all of them.
 
 For hash tables, checksums and deduplication. **Not** for passwords, MACs, signatures, or keys
@@ -64,7 +64,7 @@ The result is always identical to `hassh64()`; each call just does less work:
 
 ```c
 hassh64_key k;
-hassh64_key_init(&k, seed);                 /* once per seed (528 bytes) */
+hassh64_key_init(&k, seed);                 /* once per seed (1072 bytes) */
 uint64_t h = hassh64_keyed(&k, data, len);  /* == hassh64(data, len, seed) */
 ```
 
@@ -80,10 +80,11 @@ target_link_libraries(your_target PRIVATE hassh64::hassh64)
 `cmake --install` also installs the header and a `find_package(hassh64)` config.
 
 **Other languages.** [`SPEC.md`](SPEC.md) defines the algorithm completely, and
-[`test/vectors.h`](test/vectors.h) has 532 known answers. A port is correct when it reproduces
+[`test/vectors.h`](test/vectors.h) has 548 known answers. A port is correct when it reproduces
 all of them. [`ports/python/hassh64.py`](ports/python/hassh64.py) is a slow pure-Python
 reference, written by an AI agent from `SPEC.md` alone (without reading the C code) as a check
-that the spec is complete. It passes all 532 vectors.
+that the spec is complete. It passes all 548 vectors (it was updated for the 4096+ byte
+section the same way, from `SPEC.md` alone).
 
 **Platforms.** Every platform gives bit-identical output:
 
@@ -188,11 +189,17 @@ operands, swapped AES lanes, length changes, 256-way multicollisions). Every pai
 collide under any of 65,541 seeds. Passing rules out those attacks, nothing more. No human
 cryptographer has analysed it.
 
-**2.x trades some margin for speed.** With 3 AES rounds per block, the best 3-round
-differential an AI reviewer found gives fixed pairs of inputs over 64 bytes that collide for
-about 2^-51 of seeds, against the ideal 2^-64. That is still far too rare to exploit (an
-attacker would need around 2^51 tries against one seed), but 1.x, with 4 rounds per block, had
-no such pairs. If that margin matters to you, stay on 1.x.
+**2.x trades some margin for speed on 65–4095 bytes.** With 3 AES rounds per block, the best
+3-round differential an AI reviewer found gives fixed pairs of inputs of 65–4095 bytes that
+collide for about 2^-51 of seeds, against the ideal 2^-64. That is still far too rare to
+exploit (an attacker would need around 2^51 tries against one seed), but 1.x, with 4 rounds per
+block, had no such pairs. If that margin matters to you, stay on 1.x.
+
+**From 4096 bytes** hassh64 uses LeMac's step function, whose designers proved (by MILP, in a
+peer-reviewed paper that was later corrected once) that any differential trail to a collision of
+the state has at least 26 active S-boxes. hassh64's own additions around it (the seed-derived
+start, two interleaved states, the compression of the final state to 64 bits) have only had AI
+review; `test/longstats.c` checks them statistically.
 
 Known residual weaknesses, each affecting about 2^-64 of seeds:
 
@@ -219,6 +226,15 @@ Known residual weaknesses, each affecting about 2^-64 of seeds:
   3 more rounds and a 64-bit fold. Those 3 rounds remove the XOR's statistical linearity, but
   they are a public bijection and add no collision resistance. Inputs over 256 bytes use
   256-byte stripes, the last aligned to the end.
+* **4096+ bytes, LeMac.** Two independent states of LeMac ([Bariant, David, Leurent, ToSC
+  2024](https://tosc.iacr.org/index.php/ToSC/article/view/11619), message schedule as corrected
+  in [ToSC 2025](https://tosc.iacr.org/index.php/ToSC/article/view/12089)), nine 128-bit words
+  each, take alternate 16-byte words of each 128-byte step: 8 AES rounds per 64 bytes, 2 per 16
+  bytes instead of the lanes' 3. One 256-bit VAES register holds the same word of both states.
+  After four blank steps every word passes 4 AES rounds under its own key (two different
+  nonzero word differences then cancel with probability at most the 4-round AES bound, about
+  2^-113), the 18 words are XORed with the length vector, and 3 rounds remove the linearity
+  between the two states. The fixed cost of that finalization is why it starts at 4096 bytes.
 
 Things that were tried and fail:
 
@@ -237,7 +253,9 @@ Things that were tried and fail:
 ## Testing
 
 ```
-make test        # known-answer vectors on every x86 path, ISA cross-check, ASan bounds, attack suites
+make test        # known-answer vectors on every x86 path, ISA cross-check, ASan bounds, attack suites,
+                 # LeMac step vs. the reference code, long-input statistics (quick)
+build/longstats  # the long-input statistics at full size (about a minute)
 make test-cross  # vectors on i386, musl, s390x, ARM, AArch64 (zig + QEMU_DIR with qemu-s390x/arm/aarch64)
 make test-arm    # full suite on AArch64 under QEMU
 ./fetch-deps.sh  # clones xxHash, rapidhash, wyhash and SMHasher3 into deps/

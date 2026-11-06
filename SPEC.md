@@ -47,6 +47,30 @@ d192e819d6ef5218 d69906245565a910 f40e35855771202a 106aa07032bbd1b8
 90befffa23631e28 a4506cebde82bde9 bef9a3f7b2c67915 c67178f2e372532b
 ```
 
+`L[0..71]`: the first 64 bits of the fractional parts of the cube roots of the 81st to 152nd
+primes, in order (SHA-512's 80 round constants come from the first 80 primes; `L` continues them).
+
+```
+7ba0ea2d98160007 7eabf2d0c21f964a 8dbe8d038b409545 90bb1721582e8285
+99a2ad45936d4e61 9f86e289fe03e739 a84c4472faa9a82f b3df34fce89e0532
+b99bb8d7b173534f bc76cbab1aea1f9c c226a69a780f3cc3 d304f19aa233957d
+de1be20a212129dd e39bb43755141950 ee84927cea48ddd2 f3edd2773c523b67
+fbfdfe53a8d32f2a 0bee2c7ab77e9e25 0e90181cf1b09e56 25f57204c725bed8
+2da45582cd598b32 3a52c34c203bfcf3 41dc0172cd1991c1 495796fcb33cc1c0
+4bd31fc693f9f16e 533cde2115f5a9a0 5f7abfe36e99c1d3 66c206b310a57e6f
+6dfcc6bc39603f61 7062f20f86fd1052 778d51277adec865 7eaba3cc25da7048
+8363eccc37a5be05 85be1c253beba54e 93c04028f348bbc5 9f4a205fd05b2148
+a19535651ca6d2de a627bb0fbf027bc7 acfa80891da2f06b b3c29b23031a7f9d
+b602f6fac7d3d74d c36cee0a10c7ba49 c7dc81eea9ebad4f ce7b8471b0f809df
+d740288c84df269c e21dba7ac2290607 eabbff66be175964 f56a9e60f62cea92
+fde41d729d126eab 0434d0970e42e781 0a7cb752a3f1cd86 0ea7d22d6bcd7382
+16f2987f9495a5ee 1d20cdcd45b8de1e 213af85a39b0c320 2964505c52a2f35b
+2d738e114181e082 3b8cea0e71c58aaf 4584e6ae9f54016e 515f4356903dccc2
+5356112ddfd5a8e9 5d1bc3edbe2c897a 5f0da9f8ed53548b 62ef0be4d5492e78
+64de896eace0be7f 6e801ba3078ae05f 7bdb3595cdadf50a 7fa5377856834c98
+818916bad3d008a8 854e959f834021a7 926a82c27137e2c6 9622c7ba7d179197
+```
+
 ## Seed keys (every length)
 
 ```
@@ -104,6 +128,9 @@ return fold(x0 ^ x2 ^ P[4], x1 ^ x3 ^ t)
 
 ## Length 65 and up (AES)
 
+Lengths 65..4095 use the lanes below; 4096 and up use the LeMac absorber (next section).
+Both share the block definitions and `lv`.
+
 ### Blocks and the AES round
 
 A block is 16 bytes. `blk(lo, hi)` is the block whose bytes 0..7 are `lo` little-endian and
@@ -144,7 +171,7 @@ Lane `i` starts as `acc[i] = init(i)`. Absorbing block `d` into lane `i` means
   for `i` = 4..7.
 - **129..256 bytes**: 16 lanes. Lane `i` absorbs `ld(16i)` for `i` = 0..7, and
   `ld(len - 16(16 - i))` for `i` = 8..15.
-- **257 bytes and up**: 16 lanes, in 256-byte stripes:
+- **257..4095 bytes**: 16 lanes, in 256-byte stripes:
 
   ```
   off = 0
@@ -164,6 +191,53 @@ x = acc[0] ^ acc[1] ^ ... ^ acc[lanes - 1] ^ lv
 return out(fin(x))
 ```
 
+### Length 4096 and up (LeMac)
+
+Two independent states, each of nine blocks `S[0..8]` plus four blocks `RR, R0, R1, R2`. The step
+function is LeMac's (Bariant, David, Leurent, ToSC 2024; message schedule as corrected in ToSC
+2025), unchanged:
+
+```
+step(M0, M1, M2, M3):            (all old values on the right-hand side)
+    S'[0] = S[0] ^ S[8] ^ M2
+    S'[1] = aesenc(S[0], M3)
+    S'[2] = aesenc(S[1], M3)
+    S'[3] = aesenc(S[2], R1 ^ R2)
+    S'[4] = aesenc(S[3], M0)
+    S'[5] = aesenc(S[4], M0)
+    S'[6] = aesenc(S[5], M1)
+    S'[7] = aesenc(S[6], M1)
+    S'[8] = aesenc(S[7], M3)
+    R2' = R1,  R1' = R0,  R0' = RR ^ M1,  RR' = M2
+```
+
+Note the message words are the *round keys* of `aesenc`.
+
+With `lkey(w) = blk(L[2w], L[2w+1])` (w = 0..35):
+
+```
+state j (j = 0, 1):
+    S[i] = aesenc(aesenc(lkey(9j + i) ^ sv, key(30)), key(31))     for i = 0..8
+    RR = R0 = R1 = R2 = 0
+
+nsteps = ceil(len / 128)
+for k in 0 .. nsteps - 1:
+    q = 128k if k < nsteps - 1 else len - 128       (the final step is aligned to the end)
+    for j in 0, 1:
+        state j: step(ld(q + 16j), ld(q + 32 + 16j), ld(q + 64 + 16j), ld(q + 96 + 16j))
+
+for j in 0, 1: state j: four blank steps, step(0, 0, 0, 0)
+
+comp(w, x) = aesenc(aesenc(aesenc(aesenc(x ^ lkey(18 + w), key(16)), key(17)), key(18)), key(19))
+x = lv
+for j in 0, 1: for i in 0..8: x = x ^ comp(9j + i, S[i] of state j)
+return out(fin(x))
+```
+
+State 0 absorbs the 16-byte words at offsets 0, 32, 64, 96 of every 128-byte step and state 1
+those at 16, 48, 80, 112, so one 256-bit register can hold word `i` of both states. The states are
+independent until the final XOR: an implementation may run them one after the other.
+
 ## Porting notes
 
 - `mul` needs the full 128-bit product: `u128` in Rust, `bits.Mul64` in Go,
@@ -178,5 +252,5 @@ return out(fin(x))
 
 The output for every input is frozen for all 2.x releases. 2.x differs from 1.x only for inputs
 longer than 64 bytes: 3 rounds per block instead of 4, lane starts that depend on the seed alone,
-and the length vector `lv`. Any change to any output, on any
+the length vector `lv`, and the LeMac absorber from 4096 bytes. Any change to any output, on any
 input, makes a new major version.

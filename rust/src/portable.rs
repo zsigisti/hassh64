@@ -1,7 +1,7 @@
 //! Portable 65+-byte path: software AES round (table S-box). The reference the
 //! hardware paths are tested against; used on targets without AES instructions.
 
-use crate::consts::{FIN_KEY0, FIN_ROUNDS, INIT_KEY0, INIT_KEY1, K, ROUNDS, ROUND_KEY0};
+use crate::consts::{FIN_KEY0, FIN_ROUNDS, INIT_KEY0, INIT_KEY1, K, L, LONG_MIN, ROUNDS, ROUND_KEY0};
 use crate::scalar::{len_vec, seed_s, seed_vec};
 
 type Blk = [u8; 16];
@@ -100,10 +100,73 @@ fn out(mut x: Blk) -> u64 {
     u64::from_le_bytes(lo) ^ u64::from_le_bytes(hi)
 }
 
+#[inline(always)]
+fn lkey(w: usize) -> Blk {
+    set(L[2 * w], L[2 * w + 1])
+}
+
+/// One LeMac step (Bariant, David, Leurent, ToSC 2024; corrected message
+/// schedule): `s` = S0..S8, `r` = RR, R0, R1, R2. The message words are the
+/// round keys.
+#[inline]
+fn lm_step(s: &mut [Blk; 9], r: &mut [Blk; 4], m: [Blk; 4]) {
+    let s0 = xor(xor(s[0], &s[8]), &m[2]);
+    s[8] = aesenc(&s[7], &m[3]);
+    s[7] = aesenc(&s[6], &m[1]);
+    s[6] = aesenc(&s[5], &m[1]);
+    s[5] = aesenc(&s[4], &m[0]);
+    s[4] = aesenc(&s[3], &m[0]);
+    s[3] = aesenc(&s[2], &xor(r[2], &r[3]));
+    s[2] = aesenc(&s[1], &m[3]);
+    s[1] = aesenc(&s[0], &m[3]);
+    s[0] = s0;
+    r[3] = r[2];
+    r[2] = r[1];
+    r[1] = xor(r[0], &m[1]);
+    r[0] = m[2];
+}
+
+/// 4096+ bytes, portable: two LeMac states (see SPEC.md).
+fn long(p: &[u8], seed: u64) -> u64 {
+    let len = p.len();
+    let s = seed_s(seed);
+    let (svlo, svhi) = seed_vec(s);
+    let sv = set(svlo, svhi);
+    let (lvlo, lvhi) = len_vec(s, len as u64);
+    let mut x = aesenc(&aesenc(&set(lvlo, lvhi), &key(INIT_KEY0)), &key(INIT_KEY1));
+    let nsteps = (len + 127) / 128;
+    let z = [0u8; 16];
+    for j in 0..2 {
+        let mut st = [z; 9];
+        for (i, w) in st.iter_mut().enumerate() {
+            *w = aesenc(&aesenc(&xor(lkey(9 * j + i), &sv), &key(INIT_KEY0)), &key(INIT_KEY1));
+        }
+        let mut r = [z; 4];
+        for k in 0..nsteps {
+            let q = if k + 1 < nsteps { 128 * k } else { len - 128 } + 16 * j;
+            lm_step(&mut st, &mut r, [ld(p, q), ld(p, q + 32), ld(p, q + 64), ld(p, q + 96)]);
+        }
+        for _ in 0..4 {
+            lm_step(&mut st, &mut r, [z; 4]);
+        }
+        for (i, w) in st.iter().enumerate() {
+            let mut y = xor(*w, &lkey(18 + 9 * j + i));
+            for rr in 0..4 {
+                y = aesenc(&y, &key(ROUND_KEY0 + rr));
+            }
+            x = xor(x, &y);
+        }
+    }
+    out(x)
+}
+
 /// 65+ bytes, portable.
 pub(crate) fn large(p: &[u8], seed: u64) -> u64 {
     let len = p.len();
     debug_assert!(len > 64);
+    if len >= LONG_MIN {
+        return long(p, seed);
+    }
     let s = seed_s(seed);
     let (svlo, svhi) = seed_vec(s);
     let sv = set(svlo, svhi);

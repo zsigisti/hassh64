@@ -3,7 +3,8 @@
 //! A fast, seeded, non-cryptographic 64-bit hash, in pure Rust. Output is
 //! bit-identical to the C reference (`hassh.h`) and the language-neutral
 //! `SPEC.md` on every platform, and is frozen for all 2.x releases. 1.x outputs
-//! differ for inputs over 64 bytes (2.0 changed the AES section); inputs of
+//! differ for inputs over 64 bytes (2.0 changed the AES section and added the
+//! LeMac absorber for 4096+ bytes); inputs of
 //! 0..64 bytes hash the same in 1.x and 2.x.
 //!
 //! **AI-generated.** The hash, this crate and its tests were written by an AI
