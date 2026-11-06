@@ -1,5 +1,5 @@
 /*
- * hassh64 2.0.0: a fast, seeded, non-cryptographic 64-bit hash.
+ * hassh64 2.1.1: a fast, seeded, non-cryptographic 64-bit hash.
  * https://github.com/zsigisti/hassh64
  *
  * AI-generated: designed and written by an AI (Anthropic's Claude, via Claude
@@ -23,6 +23,14 @@
  *   anything else     portable C (32-bit, big-endian, RISC-V, WebAssembly...).
  * Every path gives bit-identical output; SPEC.md defines the algorithm and
  * test/vectors.h freezes it. Define HASSH_PORTABLE to force portable C.
+ *
+ * Kernels and other freestanding code (-ffreestanding): no run-time dispatch
+ * (SSE state may not be saved), no library calls (memcpy goes through the
+ * compiler builtin), no <string.h> needed. Built without -maes, as kernels
+ * are, this is the portable C path: 2-8x faster than FNV-1a on 4-64-byte
+ * keys. Note that hassh64 mixes like a random function: in a table indexed by
+ * hash % size, sequential integer keys (PIDs, offsets) that an identity-like
+ * hash spreads perfectly will see ordinary random-hash collisions instead.
  *
  * Design summary
  *   len  0..32   scalar: 64x64->128 multiplies folded to 64 bits (wyhash /
@@ -70,12 +78,29 @@
 
 #define HASSH_VERSION_MAJOR 2   /* bumped whenever any output changes */
 #define HASSH_VERSION_MINOR 1
-#define HASSH_VERSION_PATCH 0
-#define HASSH_VERSION "2.1.0"
+#define HASSH_VERSION_PATCH 1
+#define HASSH_VERSION "2.1.1"
 
 #include <stdint.h>
 #include <stddef.h>
-#include <string.h>
+/* memcpy/memset through the builtins where available: freestanding builds
+ * (-ffreestanding implies -fno-builtin, as in kernels) would otherwise call
+ * the library memcpy for every 8-byte load, 4-9x slower on short keys. The
+ * builtins inline even under -fno-builtin; freestanding builds then need no
+ * <string.h> (a kernel's include path may not have one, or have libc's). */
+#if !defined(__STDC_HOSTED__) || __STDC_HOSTED__
+#  include <string.h>   /* hosted builds keep it, as before */
+#endif
+#if defined(__GNUC__) || defined(__clang__)
+#  define HASSH_MEMCPY __builtin_memcpy
+#  define HASSH_MEMSET __builtin_memset
+#else
+#  if defined(__STDC_HOSTED__) && !__STDC_HOSTED__
+#    include <string.h>
+#  endif
+#  define HASSH_MEMCPY memcpy
+#  define HASSH_MEMSET memset
+#endif
 
 /* ISA selection. HASSH_HAVE_SIMD: an AES path is compiled. HASSH_DISPATCH:
  * it is compiled for a target the build does not assume (x86-64 GCC/Clang
@@ -95,6 +120,7 @@
 #      include <wmmintrin.h>
 #    endif
 #  elif defined(HASSH_X64) && !defined(HASSH_NO_DISPATCH) && \
+        !(defined(__STDC_HOSTED__) && !__STDC_HOSTED__) && \
         (defined(__clang__) || (defined(__GNUC__) && __GNUC__ >= 5))
 #    define HASSH_HAVE_SIMD 1
 #    define HASSH_DISPATCH 1
@@ -236,14 +262,14 @@ typedef char hassh_l_size_check[(sizeof HASSH_L / sizeof HASSH_L[0] == 72) ? 1 :
 /* ---------------------------------------------------------------- scalar */
 
 HASSH_INLINE uint64_t hassh_r64(const uint8_t *p) {
-    uint64_t v; memcpy(&v, p, 8);
+    uint64_t v; HASSH_MEMCPY(&v, p, 8);
 #if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
     v = __builtin_bswap64(v);
 #endif
     return v;
 }
 HASSH_INLINE uint64_t hassh_r32(const uint8_t *p) {
-    uint32_t v; memcpy(&v, p, 4);
+    uint32_t v; HASSH_MEMCPY(&v, p, 4);
 #if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
     v = __builtin_bswap32(v);
 #endif
@@ -346,7 +372,7 @@ HASSH_INLINE uint64_t hassh_small_k(const uint8_t *p, size_t len, uint64_t s, ui
         a = hassh_r32(p);
         b = len > 4 ? hassh_tail3(p + 4, len - 4) : 0;
     } else if (len >= 2) {
-        uint16_t h; memcpy(&h, p, 2);
+        uint16_t h; HASSH_MEMCPY(&h, p, 2);
 #if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
         h = __builtin_bswap16(h);
 #endif
@@ -979,8 +1005,8 @@ static inline uint64_t hassh_long(const uint8_t *p, size_t len, uint64_t s, cons
      * MinGW GCC does not realign the stack for 32-byte locals (GCC bug 54412)
      * yet emits aligned moves for them. The asm uses unaligned moves. */
     uint8_t A[12 * 32];
-    memcpy(A, ls, 9 * 32);
-    memset(A + 9 * 32, 0, 3 * 32);
+    HASSH_MEMCPY(A, ls, 9 * 32);
+    HASSH_MEMSET(A + 9 * 32, 0, 3 * 32);
     size_t nsteps = (len + 127) / 128;
     const uint8_t *prev = hassh_zero128;
     if (nsteps > 1) hassh_lm_steps2(A, p, nsteps - 1, &prev);

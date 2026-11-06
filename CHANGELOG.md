@@ -3,6 +3,19 @@
 All notable changes to this project are documented here. hassh64 follows
 [Semantic Versioning](https://semver.org/): any change to the hash output is a new major version.
 
+## [2.1.1] - 2026-11-06
+
+No output change.
+
+### Fixed
+- Freestanding builds (`-ffreestanding`, which implies `-fno-builtin`, as kernels use): the
+  fixed-size `memcpy` loads compiled to library calls, making short keys 4-9x slower than
+  FNV-1a instead of faster. `memcpy`/`memset` now go through `__builtin_memcpy` /
+  `__builtin_memset` on GCC and Clang, so no calls remain.
+- Freestanding builds no longer include `<string.h>` (a kernel's include path may resolve it to
+  libc's userspace header) and never dispatch to AES-NI at run time (a kernel may not save SSE
+  state). Hosted builds are unchanged.
+
 ## [2.1.0] - 2026-11-06
 
 No output change: all 548 vectors are identical.

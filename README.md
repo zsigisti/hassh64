@@ -72,7 +72,7 @@ uint64_t h = hassh64_keyed(&k, data, len);  /* == hassh64(data, len, seed) */
 
 ```cmake
 include(FetchContent)
-FetchContent_Declare(hassh64 GIT_REPOSITORY https://github.com/zsigisti/hassh64 GIT_TAG v2.1.0)
+FetchContent_Declare(hassh64 GIT_REPOSITORY https://github.com/zsigisti/hassh64 GIT_TAG v2.1.1)
 FetchContent_MakeAvailable(hassh64)
 target_link_libraries(your_target PRIVATE hassh64::hassh64)
 ```
@@ -95,6 +95,7 @@ section the same way, from `SPEC.md` alone).
 |---|---|---|
 | x86-64, GCC / Clang, `-march=native` or `-maes -msse4.1` | AES-NI (and VAES with `-mvaes -mavx2`) | compile time |
 | x86-64, GCC / Clang, default flags | AES-NI if the CPU has it, else portable C | run-time check, cached (`HASSH_NO_DISPATCH` turns it off) |
+| Freestanding (`-ffreestanding`, kernels) | portable C unless built with `-maes -msse4.1` | no run-time check, no library calls, no `<string.h>` |
 | x86-64, MSVC | AES-NI with `/arch:AVX2` or `HASSH_ASSUME_AESNI`, else portable C | compile time |
 | AArch64 with the crypto extension (Apple targets, `-march=armv8-a+crypto`) | ARMv8 AES | compile time |
 | anything else: 32-bit, big-endian, RISC-V, WebAssembly, ... | portable C | |
