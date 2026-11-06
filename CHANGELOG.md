@@ -12,6 +12,8 @@ No output change.
   fixed-size `memcpy` loads compiled to library calls, making short keys 4-9x slower than
   FNV-1a instead of faster. `memcpy`/`memset` now go through `__builtin_memcpy` /
   `__builtin_memset` on GCC and Clang, so no calls remain.
+- Rust crate 2.1.1 (crates.io) carries 2.1.0's faster no-AES path; the C fixes above do not
+  apply to it.
 - Freestanding builds no longer include `<string.h>` (a kernel's include path may resolve it to
   libc's userspace header) and never dispatch to AES-NI at run time (a kernel may not save SSE
   state). Hosted builds are unchanged.
