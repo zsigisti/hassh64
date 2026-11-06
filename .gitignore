@@ -5,3 +5,9 @@ deps/
 *.obj
 __pycache__/
 rust/target/
+integrations/**/*.so
+integrations/**/*.dylib
+integrations/**/*.bc
+integrations/postgres/results/
+integrations/postgres/regression.*
+integrations/postgres/log/

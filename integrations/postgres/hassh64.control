@@ -1,0 +1,4 @@
+comment = 'hassh64: fast seeded non-cryptographic 64-bit hash'
+default_version = '2.1'
+module_pathname = 'hassh64'
+relocatable = true

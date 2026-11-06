@@ -37,6 +37,9 @@ an attacker controls (see [Security](#security)).
 
 ## Using it
 
+Ready-made packaging for kernels, SQLite, PostgreSQL and C++ containers is in
+[`integrations/`](integrations/), each with a test against the same vectors.
+
 **Command line.** Download a binary from the
 [release page](https://github.com/zsigisti/hassh64/releases/latest) (Linux, macOS and Windows,
 x86-64 and ARM64), or build it with `make cli`:

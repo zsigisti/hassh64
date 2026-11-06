@@ -2,7 +2,7 @@ CC  ?= gcc
 CXX ?= g++
 B   := build
 
-.PHONY: test test-arm test-cross bench cli clean
+.PHONY: test test-arm test-cross bench cli clean integrations
 
 # Cross-check: the VAES, SSE/AES-NI and portable builds must agree with the
 # portable reference and with each other (same digest), and never read out of
@@ -60,6 +60,15 @@ test-arm: | $(B)
 	$(QEMU) -cpu max $(B)/arm_bounds
 	zig cc -target aarch64-linux-musl -mcpu=cortex_a76+aes -O2 -o $(B)/arm_xlen test/xlen.c
 	$(QEMU) -cpu max $(B)/arm_xlen | tail -1
+
+# integrations/: kernel (freestanding, 6 targets), C++, SQLite, PostgreSQL.
+# Each one runs only if its tools are installed (clang; sqlite3 + headers;
+# pg_config + initdb, PostgreSQL 18+ for the throwaway-cluster check).
+integrations:
+	$(MAKE) -C integrations/kernel check
+	$(MAKE) -C integrations/cpp test
+	@if command -v sqlite3 >/dev/null; then $(MAKE) -C integrations/sqlite test; else echo "sqlite: skipped"; fi
+	@if command -v pg_config >/dev/null && command -v initdb >/dev/null; then integrations/postgres/check.sh; else echo "postgres: skipped"; fi
 
 # Command-line tool: build/hassh64 "text", or -f FILE, or stdin.
 cli: | $(B)

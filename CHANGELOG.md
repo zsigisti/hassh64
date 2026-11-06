@@ -3,6 +3,16 @@
 All notable changes to this project are documented here. hassh64 follows
 [Semantic Versioning](https://semver.org/): any change to the hash output is a new major version.
 
+## [Unreleased]
+
+### Added
+- `integrations/`: ready-to-use packaging with tests that check the same output everywhere:
+  `kernel/` (freestanding guide for C and Rust kernels; build check for x86-64, AArch64,
+  RISC-V, i686, RV32 and ARMv7 with no undefined symbols and no SIMD), `sqlite/` (loadable
+  extension), `postgres/` (extension, PostgreSQL 13+), `cpp/` (`hassh::hash<T>` and
+  `hassh::string_hash` for `std::unordered_map`). `make integrations` runs them. The README
+  there also lists when hassh64 is the wrong choice, from trying it in real kernels.
+
 ## [2.1.1] - 2026-11-06
 
 No output change.
