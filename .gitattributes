@@ -1,3 +1,4 @@
 * text=auto eol=lf
 *.exe binary
 test/vectors.h linguist-generated=true
+projects/**/*.patch -text
