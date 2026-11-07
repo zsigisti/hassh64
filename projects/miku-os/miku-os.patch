@@ -1,0 +1,114 @@
+From 0851ab6c4d957f087b04d263bb10471d0553942a Mon Sep 17 00:00:00 2001
+From: Murka-Moncz Zsigmond <sanyikapenz@gmail.com>
+Date: Fri, 6 Nov 2026 23:18:34 +0100
+Subject: [PATCH] vfs: hash directory entry names with hassh64
+
+name_hash() places a name in its directory's open-addressed table, on
+every lookup, insert, negative entry and removal. FNV-1a is a dependent
+multiply per byte, so a lookup pays for the whole length of the name;
+hassh64 reads 8 bytes at a time.
+
+Measured on an Arrow Lake host, built the way the kernel is
+(x86_64-unknown-none, no SSE, opt-level 2, LTO), hassh64 2.1.1, ns per
+hash with each input depending on the last result:
+
+  name length  2    3    4    8    12    16    32    64    96    255
+  FNV-1a       2.9  3.9  5.0  8.0  11.0  13.9  25.3  49.8  72.9  191.6
+  hassh64      3.8  4.2  3.9  4.2   4.8   4.7   6.9   6.0 149.8  274.4
+
+Over the 916 distinct names on the built root disk (mean 15.3 bytes,
+longest 38): 16.6 -> 9.6 ns chained, 4.1 -> 2.0 ns back to back.
+
+What gets slower: names of 2 or 3 bytes, by 1.0 and 0.3 ns, and names
+over 64 bytes, which take the crate's long-input path. Without AES
+that path is about twice the cost of FNV-1a: 150 against 73 ns at 96
+bytes, 274 against 192 at 255. No name on the root disk is that long,
+but NAME_LEN allows it.
+
+The hash is never stored: it lives only in the in-memory directory
+tables, so nothing on disk or across the ABI changes. The order of
+positive entries in a table, and so the order getdents returns them in,
+does change. The crate is no_std with default features off and adds no
+SSE code to the kernel (no xmm instruction before or after); the kernel
+image grows by 55 KB.
+
+run=vfs_test;ext_test;mm_test;tty_test;cred_test;elf_test gives the same
+results before and after: 107/107, 12/12, 11 + 2 skipped, 67/67,
+39 + 1 skipped, and the known elf/relro-outside-image failure.
+---
+ Cargo.lock            |  7 +++++++
+ Cargo.toml            |  3 +++
+ kernel/fs/vfs/hash.rs | 18 ++++++++----------
+ 3 files changed, 18 insertions(+), 10 deletions(-)
+
+diff --git a/Cargo.lock b/Cargo.lock
+index 80cbad1..93ed7d9 100755
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -129,6 +129,12 @@ dependencies = [
+  "foldhash",
+ ]
+ 
++[[package]]
++name = "hassh64"
++version = "2.1.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "0b32efc608646edf2e0c63401f3cb51b6973aaf4f2f3b6f086bf20cd4728a994"
++
+ [[package]]
+ name = "image"
+ version = "0.25.10"
+@@ -191,6 +197,7 @@ dependencies = [
+  "btrfs",
+  "extfs",
+  "fshost",
++ "hassh64",
+  "image",
+  "lazy_static",
+  "libmay",
+diff --git a/Cargo.toml b/Cargo.toml
+index 17c83d1..7eecfbe 100755
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -54,6 +54,9 @@ log                   = "0.4"
+ lazy_static           = { version = "1.4.0", features = ["spin_no_std"] }
+ pc-keyboard           = "0.7.0"
+ pic8259               = "0.10.1"
++# The VFS's directory-entry name hash (`kernel/fs/vfs/hash.rs`). Without `std`
++# it is `#![no_std]`, allocates nothing and does no run-time CPU detection
++hassh64               = { version = "2.1", default-features = false }
+ 
+ [build-dependencies]
+ # Build-time only: artwork goes in as a file and comes out as pixels. The font
+diff --git a/kernel/fs/vfs/hash.rs b/kernel/fs/vfs/hash.rs
+index 99ab4bd..218b8cd 100755
+--- a/kernel/fs/vfs/hash.rs
++++ b/kernel/fs/vfs/hash.rs
+@@ -1,16 +1,14 @@
+-#[inline]
+-pub fn fnv32(data: &[u8]) -> u32 {
+-    let mut h: u32 = 0x811c9dc5;
+-    for &b in data {
+-        h ^= b as u32;
+-        h = h.wrapping_mul(0x01000193);
+-    }
+-    h
+-}
++// A directory's table (`children.rs`) places a name by this hash. It lives
++// only in memory: nothing on a disk or across the ABI holds it, so it can
++// change between builds. A fixed seed: the tables are not keyed against
++// hostile names
++const NAME_SEED: u64 = 0x6d69_6b75_5f76_6673;
+ 
++/// hassh64, low 32 bits. Without the `aes` target feature (the kernel's target
++/// has none) this is the crate's portable integer code: no SIMD, no FPU
+ #[inline]
+ pub fn name_hash(name: &str) -> u32 {
+-    fnv32(name.as_bytes())
++    hassh64::hassh64(name.as_bytes(), NAME_SEED) as u32
+ }
+ 
+ 
+-- 
+2.56.0
+

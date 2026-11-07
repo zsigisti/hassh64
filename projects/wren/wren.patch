@@ -1,0 +1,187 @@
+From eed2eb44ed20f19e3312d864fdebb6cdefd609ba Mon Sep 17 00:00:00 2001
+From: Murka-Moncz Zsigmond <sanyikapenz@gmail.com>
+Date: Sat, 7 Nov 2026 00:28:26 +0100
+Subject: [PATCH] Hash strings with hassh64 instead of FNV-1a
+
+hashString() walked the string a byte at a time with 32-bit FNV-1a.
+Replace it with hassh64 (vendored as src/vm/hassh.h, MIT; the notice is
+in the header so it also lands in the amalgamation), folded to the
+32-bit hash ObjString stores. Numbers and other values hash as before.
+
+Hash function alone, gcc -O2, ns per key:
+
+                                          FNV-1a  hassh64
+  identifiers in wren_core.wren (6.7 B)    2.08     1.72
+  identifiers in test/ (10.6 B)            3.23     1.89
+  map_string keys (22.8 B)                 8.24     2.65
+  44 B strings                            19.44     3.04
+  132 B strings                           76.84     7.80
+  1-4 B identifiers                        1.31     1.60
+
+test/benchmark, release_64bit, best of 15 interleaved runs, ms:
+
+                    before after
+  map_string         71.7  69.4  (-3.2%)
+  binary_trees_gc   374.1 354.3  (-5.3%)
+  string_equals      83.5  83.5
+  method_call        49.8  49.2
+  others within +-2%
+
+All 866 tests pass in the four CI configurations and release_32bit, and
+the raw output of every test script is unchanged.
+---
+ projects/vs2017/wren.vcxproj                |  1 +
+ projects/vs2017/wren.vcxproj.filters        |  3 +++
+ projects/vs2017/wren_shared.vcxproj         |  1 +
+ projects/vs2017/wren_shared.vcxproj.filters |  3 +++
+ projects/vs2019/wren.vcxproj                |  1 +
+ projects/vs2019/wren.vcxproj.filters        |  3 +++
+ projects/vs2019/wren_shared.vcxproj         |  1 +
+ projects/vs2019/wren_shared.vcxproj.filters |  3 +++
+ src/vm/wren_value.c                         | 15 ++++++---------
+ 9 files changed, 22 insertions(+), 9 deletions(-)
+
+diff --git a/projects/vs2017/wren.vcxproj b/projects/vs2017/wren.vcxproj
+index cdcad5a..add0790 100644
+--- a/projects/vs2017/wren.vcxproj
++++ b/projects/vs2017/wren.vcxproj
+@@ -252,6 +252,7 @@
+     <ClInclude Include="..\..\src\include\wren.h" />
+     <ClInclude Include="..\..\src\optional\wren_opt_meta.h" />
+     <ClInclude Include="..\..\src\optional\wren_opt_random.h" />
++    <ClInclude Include="..\..\src\vm\hassh.h" />
+     <ClInclude Include="..\..\src\vm\wren_common.h" />
+     <ClInclude Include="..\..\src\vm\wren_compiler.h" />
+     <ClInclude Include="..\..\src\vm\wren_core.h" />
+diff --git a/projects/vs2017/wren.vcxproj.filters b/projects/vs2017/wren.vcxproj.filters
+index 16730bd..6663901 100644
+--- a/projects/vs2017/wren.vcxproj.filters
++++ b/projects/vs2017/wren.vcxproj.filters
+@@ -21,6 +21,9 @@
+     <ClInclude Include="..\..\src\optional\wren_opt_random.h">
+       <Filter>optional</Filter>
+     </ClInclude>
++    <ClInclude Include="..\..\src\vm\hassh.h">
++      <Filter>vm</Filter>
++    </ClInclude>
+     <ClInclude Include="..\..\src\vm\wren_common.h">
+       <Filter>vm</Filter>
+     </ClInclude>
+diff --git a/projects/vs2017/wren_shared.vcxproj b/projects/vs2017/wren_shared.vcxproj
+index 38d4f8f..b3200e3 100644
+--- a/projects/vs2017/wren_shared.vcxproj
++++ b/projects/vs2017/wren_shared.vcxproj
+@@ -264,6 +264,7 @@
+     <ClInclude Include="..\..\src\include\wren.h" />
+     <ClInclude Include="..\..\src\optional\wren_opt_meta.h" />
+     <ClInclude Include="..\..\src\optional\wren_opt_random.h" />
++    <ClInclude Include="..\..\src\vm\hassh.h" />
+     <ClInclude Include="..\..\src\vm\wren_common.h" />
+     <ClInclude Include="..\..\src\vm\wren_compiler.h" />
+     <ClInclude Include="..\..\src\vm\wren_core.h" />
+diff --git a/projects/vs2017/wren_shared.vcxproj.filters b/projects/vs2017/wren_shared.vcxproj.filters
+index 16730bd..6663901 100644
+--- a/projects/vs2017/wren_shared.vcxproj.filters
++++ b/projects/vs2017/wren_shared.vcxproj.filters
+@@ -21,6 +21,9 @@
+     <ClInclude Include="..\..\src\optional\wren_opt_random.h">
+       <Filter>optional</Filter>
+     </ClInclude>
++    <ClInclude Include="..\..\src\vm\hassh.h">
++      <Filter>vm</Filter>
++    </ClInclude>
+     <ClInclude Include="..\..\src\vm\wren_common.h">
+       <Filter>vm</Filter>
+     </ClInclude>
+diff --git a/projects/vs2019/wren.vcxproj b/projects/vs2019/wren.vcxproj
+index fdc79da..a168ecf 100644
+--- a/projects/vs2019/wren.vcxproj
++++ b/projects/vs2019/wren.vcxproj
+@@ -252,6 +252,7 @@
+     <ClInclude Include="..\..\src\include\wren.h" />
+     <ClInclude Include="..\..\src\optional\wren_opt_meta.h" />
+     <ClInclude Include="..\..\src\optional\wren_opt_random.h" />
++    <ClInclude Include="..\..\src\vm\hassh.h" />
+     <ClInclude Include="..\..\src\vm\wren_common.h" />
+     <ClInclude Include="..\..\src\vm\wren_compiler.h" />
+     <ClInclude Include="..\..\src\vm\wren_core.h" />
+diff --git a/projects/vs2019/wren.vcxproj.filters b/projects/vs2019/wren.vcxproj.filters
+index 16730bd..6663901 100644
+--- a/projects/vs2019/wren.vcxproj.filters
++++ b/projects/vs2019/wren.vcxproj.filters
+@@ -21,6 +21,9 @@
+     <ClInclude Include="..\..\src\optional\wren_opt_random.h">
+       <Filter>optional</Filter>
+     </ClInclude>
++    <ClInclude Include="..\..\src\vm\hassh.h">
++      <Filter>vm</Filter>
++    </ClInclude>
+     <ClInclude Include="..\..\src\vm\wren_common.h">
+       <Filter>vm</Filter>
+     </ClInclude>
+diff --git a/projects/vs2019/wren_shared.vcxproj b/projects/vs2019/wren_shared.vcxproj
+index c87d5e3..ce4c081 100644
+--- a/projects/vs2019/wren_shared.vcxproj
++++ b/projects/vs2019/wren_shared.vcxproj
+@@ -264,6 +264,7 @@
+     <ClInclude Include="..\..\src\include\wren.h" />
+     <ClInclude Include="..\..\src\optional\wren_opt_meta.h" />
+     <ClInclude Include="..\..\src\optional\wren_opt_random.h" />
++    <ClInclude Include="..\..\src\vm\hassh.h" />
+     <ClInclude Include="..\..\src\vm\wren_common.h" />
+     <ClInclude Include="..\..\src\vm\wren_compiler.h" />
+     <ClInclude Include="..\..\src\vm\wren_core.h" />
+diff --git a/projects/vs2019/wren_shared.vcxproj.filters b/projects/vs2019/wren_shared.vcxproj.filters
+index 16730bd..6663901 100644
+--- a/projects/vs2019/wren_shared.vcxproj.filters
++++ b/projects/vs2019/wren_shared.vcxproj.filters
+@@ -21,6 +21,9 @@
+     <ClInclude Include="..\..\src\optional\wren_opt_random.h">
+       <Filter>optional</Filter>
+     </ClInclude>
++    <ClInclude Include="..\..\src\vm\hassh.h">
++      <Filter>vm</Filter>
++    </ClInclude>
+     <ClInclude Include="..\..\src\vm\wren_common.h">
+       <Filter>vm</Filter>
+     </ClInclude>
+diff --git a/src/vm/wren_value.c b/src/vm/wren_value.c
+index ce29e07..430e722 100644
+--- a/src/vm/wren_value.c
++++ b/src/vm/wren_value.c
+@@ -6,6 +6,7 @@
+ #include "wren.h"
+ #include "wren_value.h"
+ #include "wren_vm.h"
++#include "hassh.h"
+ 
+ #if WREN_DEBUG_TRACE_MEMORY
+   #include "wren_debug.h"
+@@ -689,19 +690,15 @@ static ObjString* allocateString(WrenVM* vm, size_t length)
+ // Calculates and stores the hash code for [string].
+ static void hashString(ObjString* string)
+ {
+-  // FNV-1a hash. See: http://www.isthe.com/chongo/tech/comp/fnv/
+-  uint32_t hash = 2166136261u;
+-
++  // hassh64, folded to 32 bits. See: https://github.com/zsigisti/hassh64
++  //
+   // This is O(n) on the length of the string, but we only call this when a new
+   // string is created. Since the creation is also O(n) (to copy/initialize all
+   // the bytes), we allow this here.
+-  for (uint32_t i = 0; i < string->length; i++)
+-  {
+-    hash ^= string->value[i];
+-    hash *= 16777619;
+-  }
++  uint64_t hash = hassh64(string->value, string->length,
++                          0x9e3779b97f4a7c15ull);
+ 
+-  string->hash = hash;
++  string->hash = (uint32_t)(hash ^ (hash >> 32));
+ }
+ 
+ Value wrenNewString(WrenVM* vm, const char* text)
+-- 
+2.56.0
+

@@ -1,0 +1,167 @@
+From 4f04e15b74b3a22bb079952710d9dbbac0e243e8 Mon Sep 17 00:00:00 2001
+From: Murka-Moncz Zsigmond <sanyikapenz@gmail.com>
+Date: Sat, 7 Nov 2026 00:20:52 +0100
+Subject: [PATCH 1/2] Reserve frame space for initialized flexible array member
+ in wcc
+
+A local struct with a flexible array member and an initializer, e.g.
+
+    struct FlexibleArrayMember local = {111, {222, 333, 444, 555}};
+
+got only sizeof(struct) bytes on the wasm stack frame, so the
+initializer wrote past the frame. In valtest's struct suite the frame is
+at the top of the stack, and the overrun landed on the first object in
+the data segment (address 8192). Today that object is a test-title
+string that has already been printed, so nothing fails; any change that
+reorders the globals (they are emitted in name-table order) can put a
+live variable there instead, and initializer test "init union" then
+reads g_union as 0.
+
+Size the slot from the initializer the same way the native backend
+does in alloc_locals_onto_stack_frame().
+---
+ src/wcc/gen_wasm.c | 38 ++++++++++++++++++++++++++++++--------
+ 1 file changed, 30 insertions(+), 8 deletions(-)
+
+diff --git a/src/wcc/gen_wasm.c b/src/wcc/gen_wasm.c
+index 6e0245b..04eb876 100644
+--- a/src/wcc/gen_wasm.c
++++ b/src/wcc/gen_wasm.c
+@@ -9,6 +9,7 @@
+ #include "ast.h"
+ #include "cc_misc.h"  // is_function_omitted
+ #include "fe_misc.h"  // curfunc, curscope
++#include "initializer.h"
+ #include "table.h"
+ #include "type.h"
+ #include "util.h"
+@@ -580,6 +581,32 @@ int get_funparam_index(Function *func, const Name *name) {
+   return -1;
+ }
+ 
++// Size of a local variable on the stack frame: a struct with a flexible array
++// member also needs room for the elements given in its initializer.
++static size_t local_var_size(const VarInfo *varinfo) {
++  const Type *type = varinfo->type;
++  size_t size = type_size(type);
++  if (type->kind == TY_STRUCT && type->struct_.info->flag & SIF_FLEXIBLE &&
++      !(varinfo->storage & VS_PARAM)) {
++    const Initializer *init = varinfo->local.init;
++    if (init != NULL) {
++      int m = type->struct_.info->member_count;
++      assert(init->kind == IK_MULTI);
++      assert(init->multi->len == m);
++      const Initializer *e = init->multi->data[m - 1];
++      if (e != NULL) {
++        assert(e->kind == IK_MULTI);
++        const MemberInfo *member = &type->struct_.info->members[m - 1];
++        assert(member->type->kind == TY_ARRAY);
++        size += type_size(member->type->pa.ptrof) * e->multi->len;
++      }
++    }
++  }
++  if (size < 1)
++    size = 1;
++  return size;
++}
++
+ static inline uint32_t calc_frame_size(
+     Function *func, unsigned int local_counts[4], FuncInfo *finfo) {
+   const Type *functype = func->type;
+@@ -616,9 +643,7 @@ static inline uint32_t calc_frame_size(
+       if ((varinfo->storage & VS_REF_TAKEN) ||
+           (param_index < 0 && !is_prim_type(type)) ||
+           (param_index >= 0 && is_small_struct(type))) {
+-        size_t size = type_size(type);
+-        if (size < 1)
+-          size = 1;
++        size_t size = local_var_size(varinfo);
+         frame_size = ALIGN(frame_size, align_size(type)) + size;
+       } else if (is_prim_type(type)) {
+         if (param_index < 0) {
+@@ -693,15 +718,12 @@ static inline void assign_variable_index_or_offsets(
+       varinfo->local.vreg = vreg;
+       vreg->param_index = -1;
+       const Type *type = varinfo->type;
+-      size_t size = type_size(type), align = align_size(type);
+       bool prim = is_prim_type(type);
+       if ((prim && varinfo->storage & VS_REF_TAKEN) ||  // `&` taken wasm local var.
+           !prim) {  // non-prim variable (not function parameter)
+-        frame_offset = ALIGN(frame_offset, align);
++        frame_offset = ALIGN(frame_offset, align_size(type));
+         vreg->non_prim.offset = frame_offset - frame_size;
+-        if (size < 1)
+-          size = 1;
+-        frame_offset += size;
++        frame_offset += local_var_size(varinfo);
+       } else {  // Not `&` taken, wasm local var.
+         unsigned char wt = to_wtype(type);
+         int index = WT_I32 - wt;
+-- 
+2.56.0
+
+
+From 2d858a3152a2e1fed0f5742233574da1763974f9 Mon Sep 17 00:00:00 2001
+From: Murka-Moncz Zsigmond <sanyikapenz@gmail.com>
+Date: Sat, 7 Nov 2026 00:32:39 +0100
+Subject: [PATCH 2/2] Use hassh64 for the name table hash
+
+Replace the byte-at-a-time FNV-1a in hash_string() with hassh64 (MIT,
+single header, vendored as src/util/hassh.h with its license notice),
+truncated to the existing 32-bit Name::hash. The signature, the table
+layout and every caller stay the same.
+
+hassh64 reads 8 bytes at a time, so its cost barely grows with the key
+length, while FNV-1a has a multiply in the dependency chain per byte.
+Measured on the identifier tokens of the preprocessed sqlite3.c
+amalgamation (207,025 tokens, mean length 5.7), gcc -O2, one core:
+
+  length   tokens   FNV-1a    hassh64
+  1-4      102,865  4.1 ns    5.0 ns
+  5-8       71,863  4.8 ns    2.4 ns
+  9-16      20,448  6.4 ns    2.9 ns
+  17-44     11,849  9.4 ns    2.5 ns
+  all      207,025  6.2 ns    5.9 ns
+
+Hashing is a small part of compile time, so whole compiles do not move
+beyond noise (best of 15, taskset -c 3): sqlite3.c with xcc -c 571.7 ms
+vs 569.5 ms, xcc's own 38 sources 278.7 ms vs 278.5 ms. The generated
+assembly for sqlite3.c is identical apart from local label numbering.
+
+When built by gcc/clang for x86-64 without -maes the header selects its
+AES-NI path at run time; xcc and wcc themselves (self-hosting) get the
+portable C path. The header adds about 19 KB of text to each gcc-built
+executable and about 57 KB to each self-hosted one.
+
+make test, test-gen2, test-ssa, test-wcc and test-wcc-gen2 pass.
+---
+ src/util/table.c | 10 ++++------
+ 1 file changed, 4 insertions(+), 6 deletions(-)
+
+diff --git a/src/util/table.c b/src/util/table.c
+index 5b0014a..9b36ea7 100644
+--- a/src/util/table.c
++++ b/src/util/table.c
+@@ -4,15 +4,13 @@
+ #include <stdlib.h>  // malloc
+ #include <string.h>
+ 
++#include "hassh.h"
++
+ // Hash
+ 
+ static uint32_t hash_string(const char *key, int length) {
+-  const unsigned char *u = (const unsigned char*)key;
+-  // FNV1a
+-  uint32_t hash = 2166136261u;
+-  for (int i = 0; i < length; ++i)
+-    hash = (hash ^ u[i]) * 16777619u;
+-  return hash;
++  // hassh64, truncated to the table's 32-bit hash.
++  return (uint32_t)hassh64(key, length, 0);
+ }
+ 
+ // Name
+-- 
+2.56.0
+

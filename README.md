@@ -39,6 +39,8 @@ an attacker controls (see [Security](#security)).
 
 Ready-made packaging for kernels, SQLite, PostgreSQL and C++ containers is in
 [`integrations/`](integrations/), each with a test against the same vectors.
+Ports into specific projects (melonDS, wren, miku-os, xcc), as patches with their test
+results and benchmarks, are in [`projects/`](projects/).
 
 **Command line.** Download a binary from the
 [release page](https://github.com/zsigisti/hassh64/releases/latest) (Linux, macOS and Windows,

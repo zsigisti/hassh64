@@ -1,0 +1,62 @@
+From ba27309734549795e03e1b70bf90f7f2bb80975c Mon Sep 17 00:00:00 2001
+From: Murka-Moncz Zsigmond <sanyikapenz@gmail.com>
+Date: Sat, 7 Nov 2026 09:29:54 +0100
+Subject: [PATCH] Use hassh64 for texture cache invalidation hashes
+
+MaskedHash() hashes every texture and palette range when a cache entry
+is created and again whenever the VRAM range it covers is marked dirty.
+Switch it from XXH64 to hassh64 (MIT, single header, vendored as
+src/hassh/hassh.h with its license notice). Wrapped ranges are still
+chained by passing the previous hash as the seed, the hashes only live
+in memory, and the function signature is unchanged.
+
+On x86-64 without -maes the header picks its AES-NI path at run time;
+other targets get a portable C path with identical output.
+
+MaskedHash on random VRAM contents, best of 7, one core (Core Ultra 7
+265KF), Release flags (-O3, no -march):
+
+  bytes     XXH64      hassh64    XXH3 (seeded, for reference)
+  8         2.3 ns     2.6 ns     1.7 ns
+  32        5.1 ns     3.5 ns     2.2 ns
+  512       24.3 ns    14.6 ns    12.5 ns
+  2 KiB     85.8 ns    42.7 ns    44.9 ns
+  8 KiB     322 ns     150 ns     172 ns
+  32 KiB    1.27 us    0.55 us    0.68 us
+  128 KiB   5.06 us    2.15 us    2.71 us
+
+That is about 2.3x XXH64 for texture-sized ranges (61 vs 26 GB/s at
+128 KiB). With -march=native (VAES/AVX2) hassh64 reaches 118 GB/s at
+128 KiB, XXH3 79 GB/s, XXH64 unchanged. Palette-sized ranges up to
+32 bytes are within a nanosecond either way; at 8 bytes hassh64 is
+0.3 ns slower than XXH64.
+---
+ src/GPU3D_Texcache.h | 5 ++---
+ 1 file changed, 2 insertions(+), 3 deletions(-)
+
+diff --git a/src/GPU3D_Texcache.h b/src/GPU3D_Texcache.h
+index 7e8a95d..f59ad39 100644
+--- a/src/GPU3D_Texcache.h
++++ b/src/GPU3D_Texcache.h
+@@ -8,8 +8,7 @@
+ #include <unordered_map>
+ #include <vector>
+ 
+-#define XXH_STATIC_LINKING_ONLY
+-#include "xxhash/xxhash.h"
++#include "hassh/hassh.h"
+ 
+ namespace melonDS
+ {
+@@ -62,7 +61,7 @@ public:
+                 // fits completely inside
+                 pieceSize = size;
+ 
+-            hash = XXH64(&vram[addr], pieceSize, hash);
++            hash = hassh64(&vram[addr], pieceSize, hash);
+ 
+             addr += pieceSize;
+             addr &= (vramSize - 1);
+-- 
+2.56.0
+
