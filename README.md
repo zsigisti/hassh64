@@ -93,7 +93,7 @@ Rust: `hassh64::Hassh64Stream` (`update` / `digest`, and `std::io::Write`, so
 
 ```cmake
 include(FetchContent)
-FetchContent_Declare(hassh64 GIT_REPOSITORY https://github.com/zsigisti/hassh64 GIT_TAG v2.2.0)
+FetchContent_Declare(hassh64 GIT_REPOSITORY https://github.com/zsigisti/hassh64 GIT_TAG v2.3.0)
 FetchContent_MakeAvailable(hassh64)
 target_link_libraries(your_target PRIVATE hassh64::hassh64)
 ```
@@ -115,7 +115,7 @@ section the same way, from `SPEC.md` alone).
 | platform | path | how |
 |---|---|---|
 | x86-64, GCC / Clang, `-march=native` or `-maes -msse4.1` | AES-NI (and VAES with `-mvaes -mavx2`) | compile time |
-| x86-64, GCC / Clang, default flags | AES-NI if the CPU has it, else portable C | run-time check, cached (`HASSH_NO_DISPATCH` turns it off) |
+| x86-64, GCC / Clang, default flags | VAES + AVX2 if the CPU has them (not on Windows), else AES-NI, else portable C | run-time check, cached (`HASSH_NO_DISPATCH` turns it off, `HASSH_NO_V3` keeps it to AES-NI) |
 | Freestanding (`-ffreestanding`, kernels) | portable C unless built with `-maes -msse4.1` | no run-time check, no library calls, no `<string.h>` |
 | x86-64, MSVC | AES-NI with `/arch:AVX2` or `HASSH_ASSUME_AESNI`, else portable C | compile time |
 | AArch64 with the crypto extension (Apple targets, `-march=armv8-a+crypto`) | ARMv8 AES | compile time |

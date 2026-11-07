@@ -13,10 +13,13 @@ test: | $(B)
 	$(CC) -O2 -DHASSH_PORTABLE -Wall -Wextra -o $(B)/cc_port test/crosscheck.c
 	$(CC) -O1 -g -fsanitize=address,undefined -march=native -o $(B)/bounds test/bounds.c
 	$(CC) -O1 -g -fsanitize=address,undefined -DHASSH_PORTABLE -o $(B)/bounds_port test/bounds.c
-	@a=$$($(B)/cc_vaes) && b=$$($(B)/cc_sse) && c=$$($(B)/cc_port) && \
-	 echo "vaes: $$a" && echo "sse:  $$b" && echo "port: $$c" && \
-	 [ "$$a" = "$$b" ] && [ "$$b" = "$$c" ] && echo "cross-check OK"
-	$(B)/bounds && $(B)/bounds_port
+	$(CC) -O2 -Wall -Wextra -o $(B)/cc_disp test/crosscheck.c
+	$(CC) -O2 -DHASSH_NO_V3 -Wall -Wextra -o $(B)/cc_disp_v2 test/crosscheck.c
+	$(CC) -O1 -g -fsanitize=address,undefined -o $(B)/bounds_disp test/bounds.c
+	@a=$$($(B)/cc_vaes) && b=$$($(B)/cc_sse) && c=$$($(B)/cc_port) && d=$$($(B)/cc_disp) && e=$$($(B)/cc_disp_v2) && \
+	 echo "vaes: $$a" && echo "sse:  $$b" && echo "port: $$c" && echo "dispatch: $$d" && echo "dispatch, no v3: $$e" && \
+	 [ "$$a" = "$$b" ] && [ "$$b" = "$$c" ] && [ "$$c" = "$$d" ] && [ "$$d" = "$$e" ] && echo "cross-check OK"
+	$(B)/bounds && $(B)/bounds_port && $(B)/bounds_disp
 	$(CC) -O2 -Wall -Wextra -o $(B)/lemac_ref test/lemac_ref.c && $(B)/lemac_ref
 	$(CC) -O2 -march=native -Wall -Wextra -o $(B)/longstats test/longstats.c -lm && $(B)/longstats --quick | tail -1
 	$(CC) -O2 -march=native -Wall -Wextra -o $(B)/seed_vaes test/seedindep.c
@@ -33,6 +36,8 @@ test: | $(B)
 	$(CC) -O2 -march=native -Wall -Wextra -o $(B)/stream_vaes test/stream.c && $(B)/stream_vaes
 	$(CC) -O2 -march=native -mno-vaes -Wall -Wextra -o $(B)/stream_sse test/stream.c && $(B)/stream_sse
 	$(CC) -O2 -Wall -Wextra -o $(B)/stream_dispatch test/stream.c && $(B)/stream_dispatch
+	$(CC) -O2 -DHASSH_NO_V3 -Wall -Wextra -o $(B)/stream_dispatch_v2 test/stream.c && $(B)/stream_dispatch_v2
+	$(CC) -O2 -DHASSH_NO_V3 -o $(B)/vec_dispatch_v2 test/vectors.c && $(B)/vec_dispatch_v2
 	$(CC) -O2 -DHASSH_PORTABLE -Wall -Wextra -o $(B)/stream_port test/stream.c && $(B)/stream_port
 	$(CC) -O1 -g -fsanitize=address,undefined -march=native -o $(B)/stream_asan test/stream.c && $(B)/stream_asan
 	$(CC) -std=c99 -pedantic -Wall -Wextra -Werror -c -o /dev/null test/vectors.c

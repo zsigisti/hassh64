@@ -1,5 +1,5 @@
 /*
- * hassh64 2.2.0: a fast, seeded, non-cryptographic 64-bit hash.
+ * hassh64 2.3.0: a fast, seeded, non-cryptographic 64-bit hash.
  * https://github.com/zsigisti/hassh64
  *
  * AI-generated: designed and written by an AI (Anthropic's Claude, via Claude
@@ -10,10 +10,11 @@
  *
  * Single header, C99 or C++, no dependencies. Works on any CPU and compiler:
  *   x86-64 GCC/Clang  AES-NI path. Built with -maes -msse4.1 (or -march=native)
- *                     it is used directly; built for generic x86-64 it is
- *                     picked at run time if the CPU has AES-NI (define
- *                     HASSH_NO_DISPATCH to turn that off). -mvaes -mavx2 adds
- *                     a 256-bit VAES path.
+ *                     it is used directly; -mvaes -mavx2 adds a 256-bit VAES
+ *                     path. Built for generic x86-64, the best of VAES + AVX2
+ *                     (not on Windows), AES-NI and portable C is picked at run
+ *                     time (HASSH_NO_DISPATCH turns that off, HASSH_NO_V3
+ *                     limits it to AES-NI). Freestanding builds never dispatch.
  *   x86-64 MSVC       AES-NI path with /arch:AVX2 (every AVX2 CPU has
  *                     AES-NI), or define HASSH_ASSUME_AESNI; otherwise
  *                     portable C. (clang-cl behaves like Clang: run-time
@@ -77,9 +78,9 @@
 #define HASSH_H
 
 #define HASSH_VERSION_MAJOR 2   /* bumped whenever any output changes */
-#define HASSH_VERSION_MINOR 2
+#define HASSH_VERSION_MINOR 3
 #define HASSH_VERSION_PATCH 0
-#define HASSH_VERSION "2.2.0"
+#define HASSH_VERSION "2.3.0"
 
 #include <stdint.h>
 #include <stddef.h>
@@ -722,6 +723,13 @@ static inline uint64_t hassh_large_portable(const uint8_t *p, size_t len, uint64
       (defined(__GNUC__) || defined(__clang__))   /* the long path uses GNU inline asm */
 #    define HASSH_VAES 1
 #  endif
+/* Default-flags GCC/Clang builds also compile the VAES code, under _v3 names
+ * with a target attribute, and use it when the CPU has AVX2 and VAES and the
+ * OS saves YMM state. Not on Windows: MinGW GCC does not realign the stack
+ * for 32-byte locals (GCC bug 54412). HASSH_NO_V3 turns it off. */
+#  if defined(HASSH_DISPATCH) && !defined(_WIN32) && !defined(HASSH_NO_V3)
+#    define HASSH_V3 1
+#  endif
 typedef __m128i hassh_v;
 #  define HV_LD(p)      _mm_loadu_si128((const __m128i *)(const void *)(p))
 #  define HV_XOR(a, b)  _mm_xor_si128(a, b)
@@ -884,30 +892,46 @@ HASSH_SIMD_BULK uint64_t hassh_large(const uint8_t *p, size_t len, uint64_t s, c
     HASSH_UNROLL for (int i = 1; i < 16; i++) x = HV_XOR(x, a[i]);
     return hassh_out(HV_XOR(x, hassh_lv(s, len)));
 }
-#else /* HASSH_VAES: ymm j holds lanes (2j, 2j+1); same function, twice as wide. */
-HASSH_INLINE __m256i hassh_key2(int j) { return _mm256_loadu_si256((const __m256i *)(const void *)&HASSH_K[4 * j]); }
-HASSH_INLINE __m256i hassh_ld2(const uint8_t *p) { return _mm256_loadu_si256((const __m256i *)(const void *)p); }
-HASSH_INLINE __m256i hassh_perm2(__m256i x) {
+#endif /* !HASSH_VAES */
+#if defined(HASSH_VAES) || defined(HASSH_V3)
+/* ymm j holds lanes (2j, 2j+1); same function as the 128-bit code, twice as
+ * wide. Compiled as hassh_65_128 / hassh_large / hassh_long with -mvaes, or
+ * as the _v3 functions for run-time selection. */
+#if defined(HASSH_V3)
+#  define HASSH_W_TGT __attribute__((target("aes,sse4.1,avx,avx2,vaes")))
+#  define HASSH_W_INLINE static inline __attribute__((always_inline)) HASSH_W_TGT
+#  define HASSH_W_ENTRY static inline HASSH_W_TGT
+#  define HASSH_W_BULK static inline HASSH_W_TGT
+#  define HASSH_W(name) name##_v3
+#else
+#  define HASSH_W_INLINE HASSH_INLINE
+#  define HASSH_W_ENTRY HASSH_INLINE
+#  define HASSH_W_BULK static inline
+#  define HASSH_W(name) name
+#endif
+HASSH_W_INLINE __m256i hassh_key2(int j) { return _mm256_loadu_si256((const __m256i *)(const void *)&HASSH_K[4 * j]); }
+HASSH_W_INLINE __m256i hassh_ld2(const uint8_t *p) { return _mm256_loadu_si256((const __m256i *)(const void *)p); }
+HASSH_W_INLINE __m256i hassh_perm2(__m256i x) {
     HASSH_UNROLL for (int r = 0; r < HASSH_ROUNDS; r++)
         x = _mm256_aesenc_epi128(x, _mm256_broadcastsi128_si256(HV_KEY(16 + r)));
     return x;
 }
-HASSH_INLINE __m256i hassh_init2(int j, __m256i sv) {
+HASSH_W_INLINE __m256i hassh_init2(int j, __m256i sv) {
     __m256i x = _mm256_aesenc_epi128(_mm256_xor_si256(hassh_key2(j), sv),
                                      _mm256_broadcastsi128_si256(HV_KEY(HASSH_INIT_KEY0)));
     return _mm256_aesenc_epi128(x, _mm256_broadcastsi128_si256(HV_KEY(HASSH_INIT_KEY1)));
 }
-HASSH_INLINE __m256i hassh_sv2(uint64_t s) {
+HASSH_W_INLINE __m256i hassh_sv2(uint64_t s) {
     return _mm256_broadcastsi128_si256(hassh_sv(s));
 }
-HASSH_INLINE __m256i hassh_start2(int j, __m256i sv, const uint8_t *st) {
+HASSH_W_INLINE __m256i hassh_start2(int j, __m256i sv, const uint8_t *st) {
     return st ? hassh_ld2(st + 32 * j) : hassh_init2(j, sv);
 }
-HASSH_INLINE uint64_t hassh_out2(__m256i x, uint64_t s, size_t len) {
+HASSH_W_INLINE uint64_t hassh_out2(__m256i x, uint64_t s, size_t len) {
     return hassh_out(_mm_xor_si128(_mm_xor_si128(_mm256_castsi256_si128(x), _mm256_extracti128_si256(x, 1)),
                                    hassh_lv(s, len)));
 }
-HASSH_INLINE uint64_t hassh_65_128(const uint8_t *p, size_t len, uint64_t s, const uint8_t *st) {
+HASSH_W_ENTRY uint64_t HASSH_W(hassh_65_128)(const uint8_t *p, size_t len, uint64_t s, const uint8_t *st) {
     const __m256i sv = hassh_sv2(s);
     const uint8_t *e = p + len;
     __m256i a = hassh_perm2(_mm256_xor_si256(hassh_start2(0, sv, st), hassh_ld2(p)));
@@ -916,7 +940,7 @@ HASSH_INLINE uint64_t hassh_65_128(const uint8_t *p, size_t len, uint64_t s, con
     __m256i d = hassh_perm2(_mm256_xor_si256(hassh_start2(3, sv, st), hassh_ld2(e - 32)));
     return hassh_out2(_mm256_xor_si256(_mm256_xor_si256(a, b), _mm256_xor_si256(c, d)), s, len);
 }
-static inline uint64_t hassh_large(const uint8_t *p, size_t len, uint64_t s, const uint8_t *st) {
+HASSH_W_BULK uint64_t HASSH_W(hassh_large)(const uint8_t *p, size_t len, uint64_t s, const uint8_t *st) {
     const __m256i sv = hassh_sv2(s);
     __m256i a[8];
     HASSH_UNROLL for (int j = 0; j < 8; j++) a[j] = hassh_start2(j, sv, st);
@@ -996,7 +1020,7 @@ static inline void hassh_lm_steps2(uint8_t *A, const uint8_t *q, size_t n, const
           "xmm8", "xmm9", "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15");
     *prev = pv;
 }
-static inline uint64_t hassh_long(const uint8_t *p, size_t len, uint64_t s, const uint8_t *ls) {
+HASSH_W_BULK uint64_t HASSH_W(hassh_long)(const uint8_t *p, size_t len, uint64_t s, const uint8_t *ls) {
     typedef __m256i hassh_lm_t;
     const __m256i z = _mm256_setzero_si256();
     uint8_t st[16 * 18];
@@ -1027,7 +1051,11 @@ static inline uint64_t hassh_long(const uint8_t *p, size_t len, uint64_t s, cons
     return hassh_out(_mm_xor_si128(_mm_xor_si128(_mm256_castsi256_si128(acc), _mm256_extracti128_si256(acc, 1)),
                                    hassh_lv(s, len)));
 }
-#endif /* HASSH_VAES */
+#undef HASSH_W_INLINE
+#undef HASSH_W_ENTRY
+#undef HASSH_W_BULK
+#undef HASSH_W
+#endif /* HASSH_VAES || HASSH_V3 */
 #endif /* HASSH_SIMD */
 
 /* ---------------------------------------------------------------- API */
@@ -1038,23 +1066,49 @@ static inline uint64_t hassh_long(const uint8_t *p, size_t len, uint64_t s, cons
  * __cpu_model and fails to link with some toolchains. Cached, since cpuid is
  * slow (a VM exit under virtualization); the cache is per translation unit
  * and every thread writes the same value. */
-static int hassh_cpu_state;   /* 0 unknown, 1 yes, 2 no */
+static int hassh_cpu_state;   /* 0 unknown, 1 AES-NI, 2 none, 3 AES-NI + AVX2/VAES (v3) */
 static __attribute__((noinline, cold)) int hassh_cpu_probe(void) {
     unsigned a, b, c = 0, d;
-    int ok = __get_cpuid(1, &a, &b, &c, &d) && (c & (1u << 25)) && (c & (1u << 19));
-    __atomic_store_n(&hassh_cpu_state, ok ? 1 : 2, __ATOMIC_RELAXED);
-    return ok;
+    int st = 2;
+    if (__get_cpuid(1, &a, &b, &c, &d) && (c & (1u << 25)) && (c & (1u << 19))) {
+        st = 1;
+#ifdef HASSH_V3
+        /* AVX2 + VAES (CPUID 7: EBX bit 5, ECX bit 9), usable only if the OS
+         * saves YMM state: OSXSAVE and AVX (ECX bits 27, 28), XCR0 bits 1-2. */
+        if ((c & (1u << 27)) && (c & (1u << 28))) {
+            unsigned lo, hi;
+            __asm__ volatile("xgetbv" : "=a"(lo), "=d"(hi) : "c"(0));
+            (void)hi;
+            if ((lo & 6u) == 6u && __get_cpuid_max(0, 0) >= 7) {
+                __cpuid_count(7, 0, a, b, c, d);
+                if ((b & (1u << 5)) && (c & (1u << 9))) st = 3;
+            }
+        }
+#endif
+    }
+    __atomic_store_n(&hassh_cpu_state, st, __ATOMIC_RELAXED);
+    return st;
 }
-HASSH_INLINE int hassh_cpu_aes(void) {
+HASSH_INLINE int hassh_cpu_level(void) {
     int st = __atomic_load_n(&hassh_cpu_state, __ATOMIC_RELAXED);
-    return HASSH_LIKELY(st != 0) ? st == 1 : hassh_cpu_probe();
+    return HASSH_LIKELY(st != 0) ? st : hassh_cpu_probe();
 }
+HASSH_INLINE int hassh_cpu_aes(void) { int l = hassh_cpu_level(); return l == 1 || l == 3; }
+#ifdef HASSH_V3
+HASSH_INLINE int hassh_cpu_v3(void) { return hassh_cpu_level() == 3; }
+#endif
 #endif
 
 /* 65+ bytes with s = hassh_seed_s(seed); st = precomputed lane starts or NULL. */
 HASSH_INLINE uint64_t hassh_over64(const uint8_t *p, size_t len, uint64_t s, const uint8_t *st,
                                    const uint8_t *ls) {
 #if defined(HASSH_DISPATCH)
+#  if defined(HASSH_V3)
+    if (hassh_cpu_v3()) {
+        if (len <= 128) return hassh_65_128_v3(p, len, s, st);
+        return len < HASSH_LONG_MIN ? hassh_large_v3(p, len, s, st) : hassh_long_v3(p, len, s, ls);
+    }
+#  endif
     if (hassh_cpu_aes()) {
         if (len <= 128) return hassh_65_128(p, len, s, st);
         return len < HASSH_LONG_MIN ? hassh_large(p, len, s, st) : hassh_long(p, len, s, ls);
@@ -1237,16 +1291,24 @@ HASSH_SIMD_BULK uint64_t hassh_lm_finish_v(const uint8_t *A, uint64_t s, uint64_
 #undef HASSH_HV_ST
 #endif
 
-HASSH_INLINE void hassh_lm_absorb(uint8_t *A, const uint8_t *q, size_t n) {
-#if defined(HASSH_DISPATCH)
-    if (hassh_cpu_aes()) hassh_lm_absorb_v(A, q, n); else hassh_lm_absorb_p(A, q, n);
-#elif defined(HASSH_VAES)
-    /* The asm reads RR from the previous step's address + 64. */
+#if defined(HASSH_VAES) || defined(HASSH_V3)
+/* n steps with the VAES kernel; it reads RR from the previous step's address + 64. */
+static inline void hassh_lm_absorb_w(uint8_t *A, const uint8_t *q, size_t n) {
     uint8_t pb[128];
     const uint8_t *prev = pb;
     HASSH_MEMCPY(pb + 64, A + 384, 32);
     hassh_lm_steps2(A, q, n, &prev);
     HASSH_MEMCPY(A + 384, prev + 64, 32);
+}
+#endif
+HASSH_INLINE void hassh_lm_absorb(uint8_t *A, const uint8_t *q, size_t n) {
+#if defined(HASSH_DISPATCH)
+#  if defined(HASSH_V3)
+    if (hassh_cpu_v3()) { hassh_lm_absorb_w(A, q, n); return; }
+#  endif
+    if (hassh_cpu_aes()) hassh_lm_absorb_v(A, q, n); else hassh_lm_absorb_p(A, q, n);
+#elif defined(HASSH_VAES)
+    hassh_lm_absorb_w(A, q, n);
 #elif defined(HASSH_SIMD)
     hassh_lm_absorb_v(A, q, n);
 #else
@@ -1344,6 +1406,7 @@ static inline uint64_t hassh64_digest(const hassh64_state *st) {
 #undef HASSH_X86
 #undef HASSH_ARM
 #undef HASSH_VAES
+#undef HASSH_V3
 #undef HASSH_SEEDKEYS
 #undef HASSH_INIT
 #undef HASSH_INIT_C

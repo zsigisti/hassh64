@@ -184,6 +184,13 @@ fn begin(a: &mut [u8; 416], s: u64) {
 #[allow(unreachable_code)]
 fn absorb(a: &mut [u8; 416], q: &[u8], n: usize) {
     assert!(q.len() >= 128 * n);
+    #[cfg(all(target_arch = "x86_64", feature = "std"))]
+    {
+        if n > 0 && crate::v3::detected() {
+            // SAFETY: the CPU reports AES-NI, SSE4.1, AVX2 and VAES with YMM state saved.
+            return unsafe { crate::v3::absorb(a, q, n) };
+        }
+    }
     #[cfg(all(target_arch = "x86_64", target_feature = "aes", target_feature = "sse4.1"))]
     {
         // SAFETY: the features are enabled at compile time; q holds 128 * n bytes.

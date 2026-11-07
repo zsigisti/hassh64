@@ -3,6 +3,22 @@
 All notable changes to this project are documented here. hassh64 follows
 [Semantic Versioning](https://semver.org/): any change to the hash output is a new major version.
 
+## [2.3.0] - 2026-11-07
+
+No output change: all 548 vectors are identical.
+
+### Changed
+- C, default-flags x86-64 builds (GCC and Clang, not Windows): 65+ byte inputs now use the
+  256-bit VAES + AVX2 code at run time when the CPU has it and the OS saves YMM state; before,
+  only `-march=native` builds reached it. The same code as the `-mvaes` build, compiled a second
+  time under a target attribute. One core, Arrow Lake, `gcc -O2`: 96 B 21.7 -> 18.9 ns,
+  1 KiB 50 -> 29 ns, 4 KiB 98 -> 68 ns, 64 KiB 46 -> 109 GB/s, 1 MiB 49 -> 101 GB/s. Streaming
+  uses it too. `HASSH_NO_V3` keeps run-time dispatch to AES-NI; `make test` covers both.
+- Rust, `std` builds on x86-64: inputs of 4096 bytes and more (one-shot and `Hassh64Stream`)
+  run the LeMac loop on VAES + AVX2 through inline assembly when the CPU has it (builds on the
+  1.72 MSRV): 4 KiB 88 -> 68 ns, 8 KiB 148 -> 96 ns, 64 KiB 62 -> 115 GB/s. `no_std` builds are
+  unchanged.
+
 ## [2.2.0] - 2026-11-07
 
 No output change: all 548 vectors are identical.

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.14)
-project(hassh64 VERSION 2.2.0 LANGUAGES C)
+project(hassh64 VERSION 2.3.0 LANGUAGES C)
 
 # Header-only. Use with add_subdirectory() or FetchContent, then
 #   target_link_libraries(your_target PRIVATE hassh64::hassh64)

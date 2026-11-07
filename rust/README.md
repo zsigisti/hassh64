@@ -77,13 +77,16 @@ that seed. The seed keys are derived once per `BuildHasher`, not once per key.
 | input | path |
 |---|---|
 | 0..64 bytes | scalar 64x64->128 multiplies; identical code everywhere |
+| 4096+ bytes, x86_64 with `std` | VAES + AVX2 LeMac loop (inline assembly), detected at run time |
 | 65+ bytes, x86_64 | AES-NI + SSE4.1: compiled in with `-C target-cpu=native` (or `+aes,+sse4.1`), otherwise detected at run time with `std` |
 | 65+ bytes, aarch64 | ARMv8 AES: compiled in with the `aes` target feature (default on Apple), otherwise detected at run time with `std` |
 | otherwise | portable software AES round (same output, slower) |
 
-The C header's 256-bit VAES paths (lanes and the LeMac inline-assembly loop) are not ported;
-they change speed, not output. The 4096+ byte LeMac absorber runs on 128-bit AES instructions
-here, one state after the other.
+From 4096 bytes, `std` builds on CPUs with VAES and AVX2 (and an OS that saves YMM state) run
+the C header's LeMac loop as inline assembly, for both states at once: 1.3x at 4 KiB, 1.5x at
+8 KiB, 1.9x at 64 KiB (62 -> 115 GB/s on one Arrow Lake core). `no_std` builds never use it,
+since a kernel may not save YMM state. The 65-4095 byte VAES lanes are not ported (they would
+need VAES intrinsics, Rust 1.89, above this crate's MSRV); they change speed, not output.
 
 ## Benchmarks
 

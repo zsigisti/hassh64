@@ -24,6 +24,8 @@
 //! ## Implementation paths
 //!
 //! * 0..64 bytes: scalar 64x64->128 multiplies, the same code on every target.
+//! * 4096+ bytes, x86_64 with `std`: a VAES + AVX2 LeMac loop (inline
+//!   assembly) when the CPU has it, detected at run time.
 //! * 65+ bytes, x86_64: AES-NI + SSE4.1 when enabled at compile time
 //!   (`-C target-cpu=native` or `-C target-feature=+aes,+sse4.1`); otherwise,
 //!   with the `std` feature, picked at run time if the CPU has them.
@@ -51,6 +53,8 @@ mod portable;
 mod scalar;
 mod simd;
 mod stream;
+#[cfg(all(target_arch = "x86_64", feature = "std"))]
+mod v3;
 
 pub use hasher::{Hassh64BuildHasher, Hassh64Hasher};
 pub use stream::Hassh64Stream;
@@ -87,6 +91,13 @@ pub fn hassh64(data: &[u8], seed: u64) -> u64 {
 #[inline]
 fn accel_large(data: &[u8], seed: u64) -> Option<u64> {
     debug_assert!(data.len() > 64);
+    #[cfg(all(target_arch = "x86_64", feature = "std"))]
+    {
+        if data.len() >= consts::LONG_MIN && v3::detected() {
+            // SAFETY: the CPU reports AES-NI, SSE4.1, AVX2 and VAES with YMM state saved.
+            return Some(unsafe { v3::long(data, seed) });
+        }
+    }
     #[cfg(all(target_arch = "x86_64", target_feature = "aes", target_feature = "sse4.1"))]
     {
         // SAFETY: the features are enabled at compile time; len > 64.
