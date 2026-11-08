@@ -6,6 +6,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define LONG_TOTAL_EXPECT 0x8d1dc4397bf036e7ull
+
 static uint64_t rng = 0x9e3779b97f4a7c15ull;
 static uint64_t next(void) {
     rng ^= rng << 13; rng ^= rng >> 7; rng ^= rng << 17;
@@ -31,6 +33,24 @@ static int run(const uint8_t *m, size_t len, uint64_t seed, long step, int check
     }
     if (hassh64_digest(&st) != hassh64(m, len, seed)) {
         printf("FAIL len=%zu seed=%llu step=%ld\n", len, (unsigned long long)seed, step);
+        return 1;
+    }
+    return 0;
+}
+
+/* SPEC: len is 64-bit. A stream past 4 GiB must hash the same on 32-bit
+ * targets, where size_t is narrower (2.3.0 truncated it). White-box: fake a
+ * total 2^32 bytes larger; the expected value is the 64-bit result. */
+static int long_total(void) {
+    static uint8_t m[6000];
+    for (size_t i = 0; i < sizeof m; i++) m[i] = (uint8_t)(i * 131 + 7);
+    hassh64_state st;
+    hassh64_init(&st, 42);
+    hassh64_update(&st, m, sizeof m);
+    st.total += (uint64_t)1 << 32;
+    uint64_t h = hassh64_digest(&st);
+    if (h != LONG_TOTAL_EXPECT) {
+        printf("FAIL 64-bit total: %016llx\n", (unsigned long long)h);
         return 1;
     }
     return 0;
@@ -71,6 +91,7 @@ int main(void) {
         }
     }
     free(m);
+    fail |= long_total();
     if (!fail) printf("stream: %zu cases match one-shot\n", cases);
     return fail;
 }

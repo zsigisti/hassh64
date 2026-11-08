@@ -43,6 +43,12 @@ test: | $(B)
 	$(CC) -std=c99 -pedantic -Wall -Wextra -Werror -c -o /dev/null test/vectors.c
 	$(CC) -std=c99 -pedantic -Wall -Wextra -Werror -c -o /dev/null test/stream.c
 	$(CXX) -std=c++11 -pedantic -Wall -Wextra -Werror -x c++ -c -o /dev/null test/vectors.c
+	$(CC) -O2 -Wall -Wextra -o $(B)/hassh64 tools/hassh64.c
+	@[ "$$($(B)/hassh64 -s 42 hello)" = 825305b7d83ed2a7 ] && \
+	 cat hassh.h test/*.c test/*.h > $(B)/cli_in && \
+	 a=$$($(B)/hassh64 -s 7 < $(B)/cli_in) && b=$$($(B)/hassh64 -s 7 -f - < $(B)/cli_in | cut -c1-16) && \
+	 c=$$($(B)/hassh64 -s 7 -f $(B)/cli_in | cut -c1-16) && [ "$$a" = "$$b" ] && [ "$$b" = "$$c" ] && \
+	 echo "cli: ok"
 
 # Other platforms via zig cross-compile + qemu user-mode (set QEMU_DIR to a
 # directory holding qemu-s390x, qemu-arm, qemu-aarch64): big-endian, 32-bit.
@@ -52,6 +58,8 @@ test-cross: | $(B)
 	zig cc -target x86_64-linux-musl -O2 -o $(B)/v_musl test/vectors.c && $(B)/v_musl
 	zig cc -target s390x-linux-musl -O2 -o $(B)/v_s390x test/vectors.c && $(QEMU_DIR)/qemu-s390x $(B)/v_s390x
 	zig cc -target arm-linux-musleabihf -O2 -o $(B)/v_arm test/vectors.c && $(QEMU_DIR)/qemu-arm $(B)/v_arm
+	zig cc -target x86-linux-musl -O2 -o $(B)/s_i386 test/stream.c && $(B)/s_i386
+	zig cc -target arm-linux-musleabihf -O2 -o $(B)/s_arm test/stream.c && $(QEMU_DIR)/qemu-arm $(B)/s_arm
 	zig cc -target aarch64-linux-musl -O2 -o $(B)/v_a64 test/vectors.c && $(QEMU_DIR)/qemu-aarch64 $(B)/v_a64
 	zig cc -target aarch64-linux-musl -mcpu=cortex_a76+aes -O2 -o $(B)/v_a64aes test/vectors.c && $(QEMU_DIR)/qemu-aarch64 -cpu max $(B)/v_a64aes
 	zig cc -target riscv64-linux-musl -O2 -c -o $(B)/v_rv64.o test/vectors.c

@@ -1,5 +1,5 @@
 /*
- * hassh64 2.3.0: a fast, seeded, non-cryptographic 64-bit hash.
+ * hassh64 2.3.1: a fast, seeded, non-cryptographic 64-bit hash.
  * https://github.com/zsigisti/hassh64
  *
  * AI-generated: designed and written by an AI (Anthropic's Claude, via Claude
@@ -79,8 +79,8 @@
 
 #define HASSH_VERSION_MAJOR 2   /* bumped whenever any output changes */
 #define HASSH_VERSION_MINOR 3
-#define HASSH_VERSION_PATCH 0
-#define HASSH_VERSION "2.3.0"
+#define HASSH_VERSION_PATCH 1
+#define HASSH_VERSION "2.3.1"
 
 #include <stdint.h>
 #include <stddef.h>
@@ -442,9 +442,10 @@ HASSH_INLINE void hassh_seedvec_s(uint64_t s, uint64_t *lo, uint64_t *hi) {
     *lo = s;
     *hi = hassh_fold(s ^ HASSH_P[2], HASSH_P[3]);
 }
-HASSH_INLINE void hassh_lenvec_s(uint64_t s, size_t len, uint64_t *lo, uint64_t *hi) {
-    *lo = hassh_fold(s ^ (uint64_t)len ^ HASSH_P[4], HASSH_P[5]);
-    *hi = hassh_fold(s ^ (uint64_t)len ^ HASSH_P[6], HASSH_P[7]);
+/* len is 64-bit (SPEC): a stream can be longer than size_t on 32-bit targets. */
+HASSH_INLINE void hassh_lenvec_s(uint64_t s, uint64_t len, uint64_t *lo, uint64_t *hi) {
+    *lo = hassh_fold(s ^ len ^ HASSH_P[4], HASSH_P[5]);
+    *hi = hassh_fold(s ^ len ^ HASSH_P[6], HASSH_P[7]);
 }
 
 /* One LeMac step (see hassh_long_portable_s) on the variables V0..V8 (state)
@@ -725,9 +726,22 @@ static inline uint64_t hassh_large_portable(const uint8_t *p, size_t len, uint64
 #  endif
 /* Default-flags GCC/Clang builds also compile the VAES code, under _v3 names
  * with a target attribute, and use it when the CPU has AVX2 and VAES and the
- * OS saves YMM state. Not on Windows: MinGW GCC does not realign the stack
- * for 32-byte locals (GCC bug 54412). HASSH_NO_V3 turns it off. */
-#  if defined(HASSH_DISPATCH) && !defined(_WIN32) && !defined(HASSH_NO_V3)
+ * OS saves YMM state. Not on Windows or Cygwin: their GCC does not realign the
+ * stack for 32-byte locals (GCC bug 54412). Needs a compiler that knows VAES:
+ * GCC 8+, LLVM clang 6+, Apple clang 10+. HASSH_NO_V3 turns it off. */
+#  if defined(__clang__)
+#    if defined(__apple_build_version__)
+#      define HASSH_CC_VAES (__clang_major__ >= 10)
+#    else
+#      define HASSH_CC_VAES (__clang_major__ >= 6)
+#    endif
+#  elif defined(__GNUC__)
+#    define HASSH_CC_VAES (__GNUC__ >= 8)
+#  else
+#    define HASSH_CC_VAES 0
+#  endif
+#  if defined(HASSH_DISPATCH) && !defined(_WIN32) && !defined(__CYGWIN__) && \
+      !defined(HASSH_NO_V3) && HASSH_CC_VAES
 #    define HASSH_V3 1
 #  endif
 typedef __m128i hassh_v;
@@ -769,7 +783,7 @@ HASSH_SIMD_INLINE uint64_t hassh_out(hassh_v x) {
 HASSH_SIMD_INLINE hassh_v hassh_sv(uint64_t s) {
     uint64_t lo, hi; hassh_seedvec_s(s, &lo, &hi); return HV_SET(lo, hi);
 }
-HASSH_SIMD_INLINE hassh_v hassh_lv(uint64_t s, size_t len) {
+HASSH_SIMD_INLINE hassh_v hassh_lv(uint64_t s, uint64_t len) {
     uint64_t lo, hi; hassh_lenvec_s(s, len, &lo, &hi);
     return HV_ENC(HV_ENC(HV_SET(lo, hi), HV_KEY(HASSH_INIT_KEY0)), HV_KEY(HASSH_INIT_KEY1));
 }
@@ -1014,6 +1028,9 @@ static inline void hassh_lm_steps2(uint8_t *A, const uint8_t *q, size_t n, const
         "vmovdqu %%ymm6, 0x0c0(%[a])\n\t"  "vmovdqu %%ymm7, 0x0e0(%[a])\n\t"
         "vmovdqu %%ymm8, 0x100(%[a])\n\t"  "vmovdqu %%ymm9, 0x120(%[a])\n\t"
         "vmovdqu %%ymm10, 0x140(%[a])\n\t" "vmovdqu %%ymm11, 0x160(%[a])\n\t"
+        /* Clean upper YMM state: callers (hassh64_update) may run SSE code next.
+         * Safe: every vector register is clobbered below. */
+        "vzeroupper\n\t"
         : [q] "+r"(q), [n] "+r"(n), [pv] "+r"(pv)
         : [a] "r"(A)
         : "memory", "cc", "xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "xmm6", "xmm7",
@@ -1250,7 +1267,7 @@ static inline uint64_t hassh_lm_finish_p(const uint8_t *A, uint64_t s, uint64_t 
         const hassh_blk w[9] = { v0, v1, v2, v3, v4, v5, v6, v7, v8 };
         for (int i = 0; i < 9; i++) x = hassh_x_p(x, hassh_lm_comp_p(9 * j + i, w[i]));
     }
-    { uint64_t lo, hi; hassh_lenvec_s(s, (size_t)len, &lo, &hi);
+    { uint64_t lo, hi; hassh_lenvec_s(s, len, &lo, &hi);
       x = hassh_x_p(x, hassh_aesenc_p(hassh_aesenc_p(hassh_set_p(lo, hi), hassh_key_p(HASSH_INIT_KEY0)),
                                       hassh_key_p(HASSH_INIT_KEY1))); }
     return hassh_out_p(hassh_fin_p(x));
@@ -1274,7 +1291,7 @@ HASSH_SIMD_BULK void hassh_lm_absorb_v(uint8_t *A, const uint8_t *q, size_t n) {
 HASSH_SIMD_BULK uint64_t hassh_lm_finish_v(const uint8_t *A, uint64_t s, uint64_t len) {
     typedef hassh_v hassh_lm_t;
     const hassh_v z = HV_XOR(HV_KEY(0), HV_KEY(0));
-    hassh_v x = hassh_lv(s, (size_t)len);
+    hassh_v x = hassh_lv(s, len);
     HASSH_UNROLL for (int j = 0; j < 2; j++) {
         HASSH_LM_VARS(hassh_v, v);
         HASSH_LM_LOAD(v, HV_LD, A, j);
