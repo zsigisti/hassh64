@@ -3,7 +3,7 @@
  *   hassh64 "some text"          hash the text (exact bytes, no newline added)
  *   hassh64 -s 42 "some text"    with a seed (decimal or 0x hex; default 0)
  *   hassh64 -f file1 file2 ...   hash files' contents, one line per file
- *   printf text | hassh64        hash standard input (no arguments)
+ *   printf text | hassh64        hash standard input (no arguments, or -f -)
  *
  * Prints the 64-bit hash as 16 hex digits. The same input and seed give the
  * same hash on every machine: text arguments are hashed as UTF-8 and input is
@@ -29,6 +29,7 @@ static void usage(void) {
             "usage: hassh64 [-s SEED] TEXT...\n"
             "       hassh64 [-s SEED] -f FILE...\n"
             "       hassh64 [-s SEED] < input\n"
+            "FILE '-' is standard input.\n"
             "Prints the hassh64 hash (16 hex digits). SEED is a decimal number or 0x-prefixed\n"
             "hex, 0 to 2^64-1, default 0. Not cryptographic; use sha256sum for security.\n");
 }
@@ -54,26 +55,22 @@ static int parse_seed(const char *s, uint64_t *out) {
     return 1;
 }
 
-/* Reads a whole stream; returns NULL on error. */
-static unsigned char *slurp(FILE *f, size_t *n) {
-    size_t cap = 1 << 16, len = 0;
-    unsigned char *buf = malloc(cap);
-    if (!buf) return NULL;
+/* Hashes a whole stream in 64 KiB chunks (constant memory, any size).
+ * Returns 0 on success, -1 on a read error (errno set by the C library). */
+static int hash_stream(FILE *f, uint64_t seed, uint64_t *out) {
+    static unsigned char buf[1 << 16];
+    hassh64_state st;
+    hassh64_init(&st, seed);
     for (;;) {
-        if (len == cap) {
-            unsigned char *nb = cap > SIZE_MAX / 2 ? NULL : realloc(buf, cap *= 2);
-            if (!nb) { free(buf); return NULL; }
-            buf = nb;
-        }
-        size_t r = fread(buf + len, 1, cap - len, f);
-        len += r;
-        if (r == 0) {
-            if (ferror(f)) { free(buf); return NULL; }
-            break;
+        size_t r = fread(buf, 1, sizeof buf, f);
+        hassh64_update(&st, buf, r);
+        if (r < sizeof buf) {
+            if (ferror(f)) return -1;
+            if (feof(f)) break;
         }
     }
-    *n = len;
-    return buf;
+    *out = hassh64_digest(&st);
+    return 0;
 }
 
 /* stdout must really have been written: `hassh64 x > /dev/full` is an error. */
@@ -146,11 +143,9 @@ int main(int argc, char **argv) {
 
     if (i == argc) {
         if (files) { usage(); return 2; }
-        size_t n;
-        unsigned char *buf = slurp(stdin, &n);
-        if (!buf) { perror("hassh64: stdin"); return 1; }
-        printf("%016llx\n", (unsigned long long)hassh64(buf, n, seed));
-        free(buf);
+        uint64_t h;
+        if (hash_stream(stdin, seed, &h)) { perror("hassh64: stdin"); return 1; }
+        printf("%016llx\n", (unsigned long long)h);
         return finish_output(0);
     }
 
@@ -160,17 +155,16 @@ int main(int argc, char **argv) {
             printf("%016llx\n", (unsigned long long)hassh64(argv[i], strlen(argv[i]), seed));
             continue;
         }
-        FILE *f = open_input(i, argv[i]);
-        size_t n;
-        unsigned char *buf = f ? slurp(f, &n) : NULL;
-        if (!buf) {
-            fprintf(stderr, "hassh64: %s: %s\n", argv[i], strerror(errno));
+        int is_stdin = !strcmp(argv[i], "-");
+        FILE *f = is_stdin ? stdin : open_input(i, argv[i]);
+        uint64_t h;
+        if (!f || hash_stream(f, seed, &h)) {
+            fprintf(stderr, "hassh64: %s: %s\n", is_stdin ? "stdin" : argv[i], strerror(errno));
             rc = 1;
         } else {
-            printf("%016llx  %s\n", (unsigned long long)hassh64(buf, n, seed), argv[i]);
+            printf("%016llx  %s\n", (unsigned long long)h, argv[i]);
         }
-        free(buf);
-        if (f) fclose(f);
+        if (f && !is_stdin) fclose(f);
     }
     return finish_output(rc);
 }
