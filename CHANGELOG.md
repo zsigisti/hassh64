@@ -3,6 +3,30 @@
 All notable changes to this project are documented here. hassh64 follows
 [Semantic Versioning](https://semver.org/): any change to the hash output is a new major version.
 
+## [2.3.1] - 2026-11-08
+
+No output change on 64-bit targets: all 548 vectors are identical.
+
+### Fixed
+- C streaming on 32-bit targets: streams of 4 GiB or more hashed a length truncated to
+  32 bits, so their digest differed from 64-bit builds, from Rust and from SPEC (where the length
+  is a 64-bit integer). The length now stays 64-bit through the LeMac finish. One-shot hashing
+  was never affected. `test/stream.c` checks it, and `make test-cross` now runs the stream test
+  on i386 and ARMv7.
+- C, x86-64 VAES paths: the LeMac assembly loop left the upper YMM halves dirty on return
+  (its clobber list hides that from the compiler), so SSE code after `hassh64_update`, such as
+  `memcpy`, ran with AVX-SSE transition penalties. It now ends with `vzeroupper`. Streaming
+  1 MiB in 64 KiB chunks: 85 -> 113 GB/s on Arrow Lake. One-shot speed is unchanged.
+- C, default-flags builds: the run-time VAES code (new in 2.3.0) is only compiled by compilers
+  that know VAES (GCC 8+, LLVM clang 6+, Apple clang 10+). Before, GCC 5-7 and older clang
+  failed to build `hassh.h` without `-maes`; they now use the AES-NI dispatch as in 2.2.
+- C, Cygwin x86-64: no run-time VAES path, for the same reason as MinGW (GCC does not realign
+  the stack for 32-byte locals, bug 54412).
+
+### Changed
+- CLI: input is streamed in 64 KiB chunks instead of read whole into memory, so any file size
+  works in constant memory. `-f -` reads standard input. `make test` now checks the CLI.
+
 ## [2.3.0] - 2026-11-07
 
 No output change: all 548 vectors are identical.

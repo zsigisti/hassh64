@@ -93,7 +93,7 @@ Rust: `hassh64::Hassh64Stream` (`update` / `digest`, and `std::io::Write`, so
 
 ```cmake
 include(FetchContent)
-FetchContent_Declare(hassh64 GIT_REPOSITORY https://github.com/zsigisti/hassh64 GIT_TAG v2.3.0)
+FetchContent_Declare(hassh64 GIT_REPOSITORY https://github.com/zsigisti/hassh64 GIT_TAG v2.3.1)
 FetchContent_MakeAvailable(hassh64)
 target_link_libraries(your_target PRIVATE hassh64::hassh64)
 ```
